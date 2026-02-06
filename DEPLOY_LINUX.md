@@ -138,3 +138,53 @@ To backup the PostgreSQL database:
 ```bash
 sudo docker exec -t alttext_db pg_dumpall -c -U postgres > dump_`date +%d-%m-%Y"_"%H_%M_%S`.sql
 ```
+
+## Production Setup: Nginx (Port 80/443)
+
+You asked about `/var/www/html`. **You do NOT need to move your project files to `/var/www/html`**. 
+
+With Docker, your application runs inside a container. However, for a production server, it is best practice to use **Nginx** as a "Reverse Proxy". This allows users to access your site via `http://your-domain.com` (Port 80) instead of `http://IP:5000`.
+
+### 1. Install Nginx
+```bash
+sudo apt install -y nginx
+```
+
+### 2. Create Nginx Config
+Create a configuration file for your site:
+
+```bash
+sudo nano /etc/nginx/sites-available/alttext
+```
+
+Paste the following configuration:
+
+```nginx
+server {
+    listen 80;
+    server_name your_domain_or_IP;  # Replace with actual Domain or Server IP
+
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+### 3. Enable the Site
+Link the file to `sites-enabled` and remove the default:
+
+```bash
+sudo ln -s /etc/nginx/sites-available/alttext /etc/nginx/sites-enabled/
+sudo rm /etc/nginx/sites-enabled/default  # Optional: Removes default welcome page
+```
+
+### 4. Restart Nginx
+```bash
+sudo systemctl restart nginx
+```
+
+Now your application is accessible at `http://<your-ip>` (without port 5000). The application files remain safely in your home directory (e.g., `~/Alttext`), and Nginx forwards traffic to them.
