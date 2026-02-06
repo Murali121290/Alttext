@@ -1,0 +1,107 @@
+{
+    "alt_text_validation_rules": {
+        "redundant_image_indicators": {
+            "severity": "error",
+            "trigger_type": "phrase_match",
+            "auto_fix_action": "REMOVE_PHRASE",
+            "description": "Screen readers already announce images; these terms are redundant.",
+            "words": [
+                "image of",
+                "picture of",
+                "photo of",
+                "photograph of",
+                "graphic of",
+                "illustration of",
+                "figure shows",
+                "figure illustrating",
+                "diagram of",
+                "view of"
+            ]
+        },
+        "unnecessary_action_verbs": {
+            "severity": "warning",
+            "trigger_type": "word_match",
+            "auto_fix_action": "REWRITE_SENTENCE",
+            "description": "Action verbs add length without improving meaning in alt text.",
+            "words": [
+                "shows",
+                "depicts",
+                "illustrates",
+                "represents",
+                "demonstrates"
+            ]
+        },
+        "visual_only_references": {
+            "severity": "error",
+            "trigger_type": "phrase_match",
+            "auto_fix_action": "REMOVE_AND_REWRITE",
+            "description": "References assume visual perception and reduce accessibility.",
+            "words": [
+                "as you can see",
+                "shown above",
+                "shown below",
+                "visible here",
+                "in the image above"
+            ]
+        },
+        "technical_file_terms": {
+            "severity": "warning",
+            "trigger_type": "word_match",
+            "auto_fix_action": "REPLACE_WITH_MEANING",
+            "description": "File or technical terms do not convey the image’s purpose.",
+            "words": [
+                "screenshot",
+                "thumbnail",
+                "icon image",
+                "jpeg",
+                "png",
+                "file name"
+            ]
+        },
+        "decorative_filler_words": {
+            "severity": "warning",
+            "trigger_type": "word_match",
+            "auto_fix_action": "REMOVE_WORD",
+            "description": "Decorative or filler words add subjectivity without informational value.",
+            "words": [
+                "nice",
+                "beautiful",
+                "attractive",
+                "cool",
+                "high-quality"
+            ]
+        },
+        "subjective_language": {
+            "severity": "warning",
+            "trigger_type": "word_match",
+            "auto_fix_action": "REWRITE_OBJECTIVELY",
+            "description": "Subjective language should be avoided unless the image purpose is evaluative.",
+            "words": [
+                "amazing",
+                "interesting",
+                "confusing",
+                "funny"
+            ]
+        }
+    },
+    "auto_fix_actions": {
+        "REMOVE_PHRASE": {
+            "description": "Remove matched phrase(s) without restructuring the sentence."
+        },
+        "REMOVE_WORD": {
+            "description": "Remove individual filler or subjective words."
+        },
+        "REWRITE_SENTENCE": {
+            "description": "Rewrite the sentence to remove unnecessary verbs and start with meaningful content."
+        },
+        "REMOVE_AND_REWRITE": {
+            "description": "Remove visual-only references and restate content without positional or visual cues."
+        },
+        "REPLACE_WITH_MEANING": {
+            "description": "Replace technical terms with a description of image purpose."
+        },
+        "REWRITE_OBJECTIVELY": {
+            "description": "Convert subjective language into neutral, observable descriptions."
+        }
+    }
+}

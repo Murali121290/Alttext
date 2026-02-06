@@ -1,0 +1,295 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-8" x-data="dashboardData">
+    <!-- Welcome Header -->
+    <div
+        class="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-500 via-teal-500 to-emerald-600 p-8">
+        <div class="absolute top-0 right-0 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl"></div>
+        <div class="relative z-10">
+            <div class="flex items-center gap-3 mb-4">
+                <div class="p-2 rounded-xl bg-white/20">
+                    <i data-lucide="sparkles" class="h-6 w-6 text-white"></i>
+                </div>
+                <span
+                    class="px-3 py-1 text-xs font-semibold rounded-full bg-white/20 text-white uppercase tracking-wider">
+                    AI-Powered
+                </span>
+            </div>
+            <h1 class="text-3xl font-bold text-white mb-2">Welcome to Alt Text Generator</h1>
+            <p class="text-emerald-50 max-w-xl mb-6">
+                Generate descriptive text for images in your PDF documents using advanced AI.
+                Ensures accessibility compliance automatically.
+            </p>
+            <div class="flex flex-wrap gap-3">
+                <a href="/upload"
+                    class="inline-flex items-center gap-2 px-6 py-3 rounded-xl font-semibold text-emerald-800 transition-all bg-white hover:bg-emerald-50 shadow-lg shadow-emerald-900/10 hover:shadow-emerald-900/20">
+                    <i data-lucide="upload" class="h-5 w-5"></i>
+                    Upload PDFs
+                </a>
+                <a href="/files"
+                    class="inline-flex items-center gap-2 px-6 py-3 rounded-xl font-semibold text-white border-2 border-white/20 hover:bg-white/10 transition-colors">
+                    <i data-lucide="folder" class="h-5 w-5"></i>
+                    View Outputs
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stats Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+
+        <!-- Queue -->
+        <div class="relative overflow-hidden rounded-2xl bg-white border border-slate-200/60 shadow-sm p-5">
+            <div class="flex items-start justify-between">
+                <div>
+                    <p class="text-sm font-medium text-slate-500">In Queue</p>
+                    <p class="text-3xl font-bold text-slate-800 mt-1" x-text="stats?.pending || 0">0</p>
+                    <p class="text-xs text-slate-400 mt-1">Waiting to process</p>
+                </div>
+                <div class="p-3 rounded-xl bg-gradient-to-br from-slate-500 to-slate-600 shadow-lg">
+                    <i data-lucide="clock" class="h-5 w-5 text-white"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Processing -->
+        <div
+            class="relative overflow-hidden rounded-2xl bg-white border border-slate-200/60 shadow-sm p-5 ring-2 ring-amber-400 ring-offset-2">
+            <div class="flex items-start justify-between">
+                <div>
+                    <p class="text-sm font-medium text-slate-500">Processing</p>
+                    <p class="text-3xl font-bold text-slate-800 mt-1" x-text="stats?.processing || 0">0</p>
+                    <p class="text-xs text-slate-400 mt-1">Currently active</p>
+                </div>
+                <div class="p-3 rounded-xl bg-gradient-to-br from-amber-500 to-orange-500 shadow-lg">
+                    <i data-lucide="loader-2" class="h-5 w-5 text-white animate-spin"></i>
+                </div>
+            </div>
+            <div class="absolute inset-x-0 bottom-0 h-1 bg-gradient-to-r from-amber-400 to-orange-400"></div>
+        </div>
+
+        <!-- Completed -->
+        <div class="relative overflow-hidden rounded-2xl bg-white border border-slate-200/60 shadow-sm p-5">
+            <div class="flex items-start justify-between">
+                <div>
+                    <p class="text-sm font-medium text-slate-500">Completed</p>
+                    <p class="text-3xl font-bold text-slate-800 mt-1" x-text="stats?.completed || 0">0</p>
+                    <p class="text-xs text-slate-400 mt-1">Successfully processed</p>
+                </div>
+                <div class="p-3 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 shadow-lg">
+                    <i data-lucide="check-circle" class="h-5 w-5 text-white"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Failed -->
+        <div class="relative overflow-hidden rounded-2xl bg-white border border-slate-200/60 shadow-sm p-5">
+            <div class="flex items-start justify-between">
+                <div>
+                    <p class="text-sm font-medium text-slate-500">Failed</p>
+                    <p class="text-3xl font-bold text-slate-800 mt-1" x-text="stats?.failed || 0">0</p>
+                    <p class="text-xs text-slate-400 mt-1">Requires attention</p>
+                </div>
+                <div class="p-3 rounded-xl bg-gradient-to-br from-red-500 to-rose-500 shadow-lg">
+                    <i data-lucide="x-circle" class="h-5 w-5 text-white"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Token Usage -->
+        <div
+            class="lg:col-span-2 bg-white rounded-2xl border border-slate-200/60 shadow-sm shadow-slate-200/50 overflow-hidden">
+            <div class="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="p-2.5 rounded-xl bg-gradient-to-br from-emerald-100 to-teal-100">
+                        <i data-lucide="zap" class="h-5 w-5 text-emerald-600"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-semibold text-slate-800">Token Consumption</h3>
+                        <p class="text-sm text-slate-500">AI processing metrics</p>
+                    </div>
+                </div>
+            </div>
+            <div class="p-6">
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4" x-show="tokens">
+                    <div class="p-4 rounded-xl bg-slate-50">
+                        <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Tokens</p>
+                        <p class="text-2xl font-bold mt-1 text-slate-800"
+                            x-text="formatNumber(tokens?.all_time?.total_tokens)">0</p>
+                        <p class="text-xs text-slate-400 mt-0.5">All time</p>
+                    </div>
+                    <div class="p-4 rounded-xl bg-slate-50">
+                        <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Input</p>
+                        <p class="text-2xl font-bold mt-1 text-slate-800"
+                            x-text="formatNumber(tokens?.all_time?.input_tokens)">0</p>
+                        <p class="text-xs text-slate-400 mt-0.5">Prompt tokens</p>
+                    </div>
+                    <div class="p-4 rounded-xl bg-slate-50">
+                        <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Output</p>
+                        <p class="text-2xl font-bold mt-1 text-slate-800"
+                            x-text="formatNumber(tokens?.all_time?.output_tokens)">0</p>
+                        <p class="text-xs text-slate-400 mt-0.5">Response tokens</p>
+                    </div>
+                    <div
+                        class="p-4 rounded-xl bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-200/50">
+                        <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Documents</p>
+                        <p class="text-2xl font-bold mt-1 text-emerald-600" x-text="tokens?.all_time?.total_jobs || 0">0
+                        </p>
+                        <p class="text-xs text-slate-400 mt-0.5">Processed</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Cost Summary -->
+        <div class="bg-white rounded-2xl border border-slate-200/60 shadow-sm shadow-slate-200/50 overflow-hidden">
+            <div class="px-6 py-5 border-b border-slate-100">
+                <div class="flex items-center gap-3">
+                    <div class="p-2.5 rounded-xl bg-gradient-to-br from-emerald-100 to-teal-100">
+                        <i data-lucide="coins" class="h-5 w-5 text-emerald-600"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-semibold text-slate-800">Cost Overview</h3>
+                        <p class="text-sm text-slate-500" x-text="tokens?.pricing?.model || 'Loading...'">Model</p>
+                    </div>
+                </div>
+            </div>
+            <div class="p-6">
+                <div class="space-y-6" x-show="tokens">
+                    <div class="text-center py-4">
+                        <p class="text-sm font-medium text-slate-500 mb-1">Total Spent</p>
+                        <p class="text-4xl font-bold text-emerald-600"
+                            x-text="formatCost(tokens?.all_time?.cost?.total_cost)">$0.00</p>
+                    </div>
+                    <div class="space-y-3">
+                        <div class="flex justify-between items-center py-2 border-t border-slate-100">
+                            <span class="text-sm text-slate-500">Avg per document</span>
+                            <span class="font-semibold text-slate-800"
+                                x-text="formatCost(tokens?.averages?.cost_per_job)">$0.00</span>
+                        </div>
+                        <div class="flex justify-between items-center py-2 border-t border-slate-100">
+                            <span class="text-sm text-slate-500">Today</span>
+                            <span class="font-semibold text-emerald-600"
+                                x-text="formatCost(tokens?.today?.cost?.total_cost)">$0.00</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Batches -->
+<div class="bg-white rounded-2xl border border-slate-200/60 shadow-sm shadow-slate-200/50 overflow-hidden">
+    <div class="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+            <div class="p-2.5 rounded-xl bg-gradient-to-br from-slate-100 to-slate-200">
+                <i data-lucide="folder-open" class="h-5 w-5 text-slate-600"></i>
+            </div>
+            <div>
+                <h3 class="font-semibold text-slate-800">Recent Batches</h3>
+                <p class="text-sm text-slate-500">Latest processing jobs</p>
+            </div>
+        </div>
+        <a href="/batches"
+            class="flex items-center gap-1.5 text-sm font-medium text-emerald-600 hover:text-emerald-700 transition-colors">
+            View All <i data-lucide="arrow-up-right" class="h-4 w-4"></i>
+        </a>
+    </div>
+
+    <div class="divide-y divide-slate-100" x-show="batches && batches.length > 0">
+        <template x-for="batch in batches" :key="batch.batch_id">
+            <div class="flex items-center justify-between px-6 py-4 hover:bg-slate-50 transition-colors group">
+                <div class="flex items-center gap-4">
+                    <div class="p-2.5 rounded-xl transition-colors" :class="{
+                                'bg-emerald-100': batch.status === 'completed',
+                                'bg-amber-100': batch.status === 'processing',
+                                'bg-red-100': batch.status === 'failed',
+                                'bg-slate-100': batch.status === 'pending'
+                             }">
+                        <i data-lucide="file-text" class="h-5 w-5" :class="{
+                                  'text-emerald-600': batch.status === 'completed',
+                                  'text-amber-600': batch.status === 'processing',
+                                  'text-red-600': batch.status === 'failed',
+                                  'text-slate-600': batch.status === 'pending'
+                               }"></i>
+                    </div>
+                    <div>
+                        <a :href="'/batch/' + batch.batch_id"
+                            class="font-medium text-slate-800 hover:text-emerald-600 transition-colors"
+                            x-text="batch.name"></a>
+                        <p class="text-sm text-slate-500">
+                            <span x-text="batch.total_jobs + ' files'"></span> • <span
+                                x-text="new Date(batch.created_at).toLocaleDateString()"></span>
+                        </p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-6">
+                    <div class="text-right">
+                        <p class="font-semibold text-slate-800" x-text="batch.completed_jobs + '/' + batch.total_jobs">
+                        </p>
+                        <p class="text-xs text-slate-500">completed</p>
+                    </div>
+                    <div class="text-right min-w-[60px]">
+                        <p class="font-semibold text-emerald-600" x-text="formatCost(batch.cost.total_cost)"></p>
+                        <p class="text-xs text-slate-500">cost</p>
+                    </div>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <div x-show="!batches || batches.length === 0" class="py-16 text-center">
+        <div class="w-16 h-16 mx-auto mb-4 rounded-2xl bg-slate-100 flex items-center justify-center">
+            <i data-lucide="folder-open" class="h-8 w-8 text-slate-400"></i>
+        </div>
+        <p class="font-medium text-slate-600 mb-1">No batches yet</p>
+        <p class="text-sm text-slate-500 mb-4">Get started by uploading your first documents</p>
+    </div>
+</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('alpine:init', () => {
+        Alpine.data('dashboardData', () => ({
+            stats: null,
+            tokens: null,
+            batches: [],
+            init() {
+                this.refresh();
+                setInterval(() => this.refresh(), 5000);
+            },
+            async refresh() {
+                try {
+                    const [qRes, tRes, bRes] = await Promise.all([
+                        fetch('/api/queue/status'),
+                        fetch('/api/tokens/stats'),
+                        fetch('/api/batches?limit=5')
+                    ]);
+                    this.stats = await qRes.json();
+                    this.tokens = await tRes.json();
+                    const batchData = await bRes.json();
+                    this.batches = batchData.batches;
+                } catch (e) { console.error(e); }
+            },
+            formatNumber(num) {
+                if (!num) return '0';
+                if (num >= 1_000_000) return (num / 1_000_000).toFixed(2) + 'M';
+                if (num >= 1_000) return (num / 1_000).toFixed(1) + 'K';
+                return num.toLocaleString();
+            },
+            formatCost(cost) {
+                if (!cost) return '$0.00';
+                if (cost < 0.01) return '$' + cost.toFixed(4);
+                return '$' + cost.toFixed(2);
+            }
+        }))
+    });
+</script>
+{% endblock %}

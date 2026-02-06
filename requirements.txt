@@ -1,0 +1,10 @@
+Flask
+pymupdf
+google-generativeai
+pandas
+openpyxl
+python-dotenv
+Pillow
+Flask-Login
+gunicorn
+psycopg2-binary

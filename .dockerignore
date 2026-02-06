@@ -1,0 +1,27 @@
+
+# Version Control
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+venv
+env
+.env
+
+# Data
+uploads/*
+outputs/*
+*.db
+*.sqlite3
+postgres_data/
+
+# Logs
+*.log

@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    container_name: alttext_app
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./outputs:/app/outputs
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/alttext
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - SECRET_KEY=${SECRET_KEY:-production_secret_key_here}
+    depends_on:
+      - db
+    restart: always
+
+  db:
+    image: postgres:15-alpine
+    container_name: alttext_db
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=alttext
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    restart: always

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register - Alt Text Generator</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="/static/js/lucide.min.js"></script>
+    <style>
+        .glass {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(10px);
+        }
+    </style>
+</head>
+
+<body
+    class="bg-slate-50 min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-emerald-50 via-white to-teal-50">
+
+    <div class="glass w-full max-w-md p-8 rounded-2xl shadow-xl border border-white/50">
+        <div class="flex flex-col items-center mb-8">
+            <div
+                class="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-500/20 mb-4">
+                <i data-lucide="user-plus" class="h-6 w-6 text-white"></i>
+            </div>
+            <h1 class="text-2xl font-bold text-slate-800">Create Account</h1>
+            <p class="text-slate-500 text-sm mt-1">Join the platform</p>
+        </div>
+
+        {% if error %}
+        <div class="mb-6 p-4 rounded-xl bg-red-50 border border-red-100 flex items-start gap-3">
+            <i data-lucide="alert-circle" class="h-5 w-5 text-red-500 shrink-0 mt-0.5"></i>
+            <p class="text-sm text-red-600">{{ error }}</p>
+        </div>
+        {% endif %}
+
+        <form action="/register" method="POST" class="space-y-5">
+            <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1.5">Username</label>
+                <div class="relative">
+                    <input type="text" name="username" required
+                        class="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all">
+                    <i data-lucide="user" class="absolute left-3 top-3 h-5 w-5 text-slate-400"></i>
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1.5">Password</label>
+                <div class="relative">
+                    <input type="password" name="password" required
+                        class="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all">
+                    <i data-lucide="lock" class="absolute left-3 top-3 h-5 w-5 text-slate-400"></i>
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1.5">Confirm Password</label>
+                <div class="relative">
+                    <input type="password" name="confirm_password" required
+                        class="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all">
+                    <i data-lucide="check-circle" class="absolute left-3 top-3 h-5 w-5 text-slate-400"></i>
+                </div>
+            </div>
+
+            <button type="submit"
+                class="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-semibold shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/30 hover:-translate-y-0.5 transition-all">
+                Create Account
+            </button>
+        </form>
+
+        <p class="text-center text-sm text-slate-500 mt-6">
+            Already have an account?
+            <a href="/login" class="text-emerald-600 font-medium hover:underline">Sign In</a>
+        </p>
+    </div>
+
+    <script>
+        lucide.createIcons();
+    </script>
+</body>
+
+</html>

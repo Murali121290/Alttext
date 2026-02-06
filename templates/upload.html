@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto" x-data="uploadPage">
+    <!-- Page Header -->
+    <div class="mb-8">
+        <div class="flex items-center gap-3 mb-2">
+            <div class="p-2 rounded-xl bg-gradient-to-br from-amber-100 to-orange-100">
+                <i data-lucide="sparkles" class="h-5 w-5 text-amber-600"></i>
+            </div>
+            <span
+                class="px-3 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-700 uppercase tracking-wider">
+                AI Processing
+            </span>
+        </div>
+        <h1 class="text-2xl font-bold text-slate-800">Process Documents</h1>
+        <p class="text-slate-500 mt-1">
+            Upload PDF/DOCX files for intelligent structural analysis and tagging
+        </p>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-5 gap-8">
+        <!-- Main Upload Area -->
+        <div class="lg:col-span-3 space-y-6">
+            <!-- Dropzone -->
+            <div class="bg-white rounded-2xl border border-slate-200/60 shadow-sm overflow-hidden"
+                @dragover.prevent="dragActive = true" @dragleave.prevent="dragActive = false"
+                @drop.prevent="handleDrop($event);">
+
+                <div class="p-6">
+                    <div class="relative border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all duration-300"
+                        :class="dragActive ? 'border-amber-400 bg-gradient-to-br from-amber-50 to-orange-50' : 'border-slate-200 hover:border-amber-300 hover:bg-slate-50'"
+                        @click="$refs.fileInput.click()">
+
+                        <input type="file" x-ref="fileInput" class="hidden" multiple accept=".pdf,.docx"
+                            @change="handleFiles($event.target.files)">
+
+                        <div class="w-20 h-20 mx-auto mb-6 rounded-2xl flex items-center justify-center transition-all bg-slate-100"
+                            :class="dragActive ? 'bg-gradient-to-br from-amber-400 to-orange-500 shadow-lg shadow-amber-500/30 scale-110' : ''">
+                            <i data-lucide="folder-up" class="h-10 w-10 text-slate-400"
+                                :class="dragActive ? 'text-white' : ''"></i>
+                        </div>
+
+                        <p class="text-lg font-semibold text-slate-700 mb-2">
+                            <span x-text="dragActive ? 'Drop files here' : 'Drag and drop files'"></span>
+                        </p>
+                        <p class="text-sm text-slate-500 mb-4">
+                            or click to browse from your computer
+                        </p>
+                    </div>
+                </div>
+
+                <!-- File List -->
+                <template x-if="files.length > 0">
+                    <div class="border-t border-slate-100">
+                        <div class="px-6 py-4 bg-slate-50 flex items-center justify-between">
+                            <div class="flex items-center gap-3">
+                                <i data-lucide="file-up" class="h-5 w-5 text-slate-400"></i>
+                                <span class="font-medium text-slate-700"
+                                    x-text="files.length + ' file(s) selected'"></span>
+                            </div>
+                            <button @click="files = []"
+                                class="flex items-center gap-1.5 text-sm font-medium text-red-600 hover:text-red-700 transition-colors">
+                                <i data-lucide="trash-2" class="h-4 w-4"></i>
+                                Clear all
+                            </button>
+                        </div>
+                        <div class="max-h-64 overflow-y-auto divide-y divide-slate-100">
+                            <template x-for="(file, index) in files" :key="index">
+                                <div
+                                    class="flex items-center justify-between px-6 py-3 hover:bg-slate-50 transition-colors">
+                                    <div class="flex items-center gap-3 min-w-0">
+                                        <div class="p-2 rounded-lg bg-slate-100">
+                                            <i data-lucide="file-text" class="h-4 w-4 text-slate-500"></i>
+                                        </div>
+                                        <div class="min-w-0">
+                                            <p class="text-sm font-medium text-slate-700 truncate" x-text="file.name">
+                                            </p>
+                                            <p class="text-xs text-slate-400" x-text="formatSize(file.size)"></p>
+                                        </div>
+                                    </div>
+                                    <button @click="removeFile(index)"
+                                        class="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all">
+                                        <i data-lucide="x" class="h-4 w-4"></i>
+                                    </button>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Submit Button -->
+            <button @click="submitBatch" :disabled="files.length === 0 || isUploading"
+                class="w-full py-4 px-6 rounded-2xl font-semibold text-lg transition-all duration-300 flex items-center justify-center gap-3 bg-gradient-to-r from-slate-800 to-slate-900 text-white hover:from-slate-700 hover:to-slate-800 shadow-xl shadow-slate-900/20 hover:shadow-slate-900/30 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed">
+
+                <template x-if="isUploading">
+                    <span class="flex items-center gap-2">
+                        <i data-lucide="loader-2" class="h-5 w-5 animate-spin"></i>
+                        Processing Upload...
+                    </span>
+                </template>
+                <template x-if="!isUploading">
+                    <span class="flex items-center gap-2">
+                        <i data-lucide="sparkles" class="h-5 w-5"></i>
+                        Start AI Processing
+                    </span>
+                </template>
+            </button>
+
+            <div x-show="uploadError" class="p-4 rounded-xl bg-red-50 border border-red-200 flex items-start gap-3"
+                x-cloak>
+                <div class="p-1 rounded-full bg-red-100">
+                    <i data-lucide="x" class="h-4 w-4 text-red-600"></i>
+                </div>
+                <div>
+                    <p class="font-medium text-red-800">Upload Failed</p>
+                    <p class="text-sm text-red-600" x-text="uploadError"></p>
+                </div>
+            </div>
+
+            <div x-show="uploadSuccess"
+                class="p-4 rounded-xl bg-emerald-50 border border-emerald-200 flex items-start gap-3" x-cloak>
+                <div class="p-1 rounded-full bg-emerald-100">
+                    <i data-lucide="check" class="h-4 w-4 text-emerald-600"></i>
+                </div>
+                <div>
+                    <p class="font-medium text-emerald-800">Success!</p>
+                    <p class="text-sm text-emerald-600">Batch created. Redirecting...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Panel -->
+        <div class="lg:col-span-2 space-y-6">
+            <div class="bg-white rounded-2xl border border-slate-200/60 shadow-sm p-5">
+                <label class="block text-sm font-semibold text-slate-700 mb-3">
+                    Batch Name <span class="font-normal text-slate-400 ml-1">(optional)</span>
+                </label>
+                <input type="text" x-model="batchName" placeholder="e.g., Chapter 1-5"
+                    class="w-full px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-400 transition-all placeholder:text-slate-400">
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('alpine:init', () => {
+        Alpine.data('uploadPage', () => ({
+            files: [],
+            dragActive: false,
+            batchName: '',
+            isUploading: false,
+            uploadError: null,
+            uploadSuccess: false,
+
+            handleFiles(fileList) {
+                const newFiles = Array.from(fileList);
+                // Filter logic can be added here
+                this.files = [...this.files, ...newFiles];
+            },
+            handleDrop(e) {
+                this.dragActive = false;
+                const droppedFiles = e.dataTransfer.files;
+                this.handleFiles(droppedFiles);
+            },
+            removeFile(index) {
+                this.files.splice(index, 1);
+            },
+            formatSize(bytes) {
+                if (bytes < 1024) return bytes + ' B';
+                if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+                return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+            },
+            async submitBatch() {
+                if (this.files.length === 0) return;
+                this.isUploading = true;
+                this.uploadError = null;
+
+                const formData = new FormData();
+                this.files.forEach(file => {
+                    formData.append('files', file);
+                });
+                formData.append('batch_name', this.batchName);
+
+                try {
+                    const res = await fetch('/api/queue/batch', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (!res.ok) {
+                        const err = await res.json();
+                        throw new Error(err.error || 'Upload failed');
+                    }
+                    const data = await res.json();
+                    this.uploadSuccess = true;
+                    // Redirect to batch details
+                    setTimeout(() => window.location.href = '/batch/' + data.batch.batch_id, 1000);
+
+                } catch (err) {
+                    this.uploadError = err.message;
+                } finally {
+                    this.isUploading = false;
+                }
+            }
+        }))
+    });
+</script>
+{% endblock %}

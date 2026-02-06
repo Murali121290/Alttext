@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-6" x-data="batchesData">
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold text-slate-800">Batch History</h1>
+            <p class="text-slate-500 mt-1">View and manage all your processed document batches</p>
+        </div>
+        <button @click="refresh()"
+            class="p-2 rounded-xl text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+            title="Refresh List">
+            <i data-lucide="refresh-cw" class="h-5 w-5" :class="{ 'animate-spin': loading }"></i>
+        </button>
+    </div>
+
+    <!-- Batches List -->
+    <div class="bg-white rounded-2xl border border-slate-200/60 shadow-sm shadow-slate-200/50 overflow-hidden">
+        <!-- Table Header -->
+        <div
+            class="grid grid-cols-12 gap-4 px-6 py-4 border-b border-slate-100 bg-slate-50/50 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden md:grid">
+            <div class="col-span-4">Batch Name</div>
+            <div class="col-span-3">Date</div>
+            <div class="col-span-2">Status</div>
+            <div class="col-span-2 text-right">Progress</div>
+            <div class="col-span-1 text-right">Cost</div>
+        </div>
+
+        <!-- Table Body -->
+        <div class="divide-y divide-slate-100">
+            <template x-for="batch in batches" :key="batch.batch_id">
+                <div
+                    class="grid grid-cols-1 md:grid-cols-12 gap-4 px-6 py-4 items-center hover:bg-slate-50 transition-colors group">
+
+                    <!-- Name -->
+                    <div class="col-span-1 md:col-span-4 flex items-center gap-3">
+                        <div class="p-2 rounded-lg transition-colors flex-shrink-0" :class="{
+                            'bg-emerald-100 text-emerald-600': batch.status === 'completed',
+                            'bg-amber-100 text-amber-600': batch.status === 'processing',
+                            'bg-red-100 text-red-600': batch.status === 'failed',
+                            'bg-slate-100 text-slate-600': batch.status === 'pending'
+                        }">
+                            <i data-lucide="folder" class="h-5 w-5"></i>
+                        </div>
+                        <div class="min-w-0">
+                            <a :href="'/batch/' + batch.batch_id"
+                                class="font-medium text-slate-800 hover:text-amber-600 text-sm truncate transition-colors"
+                                x-text="batch.name"></a>
+                            <p class="text-xs text-slate-500" x-text="batch.total_jobs + ' files'"></p>
+                        </div>
+                    </div>
+
+                    <!-- Date -->
+                    <div class="col-span-1 md:col-span-3 flex items-center gap-2 md:block">
+                        <span class="md:hidden text-xs font-semibold text-slate-500 uppercase w-20">Date:</span>
+                        <div>
+                            <p class="text-sm text-slate-600" x-text="formatDate(batch.created_at)"></p>
+                            <p class="text-xs text-slate-400" x-text="formatTime(batch.created_at)"></p>
+                        </div>
+                    </div>
+
+                    <!-- Status -->
+                    <div class="col-span-1 md:col-span-2 flex items-center gap-2 md:block">
+                        <span class="md:hidden text-xs font-semibold text-slate-500 uppercase w-20">Status:</span>
+                        <span
+                            class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border w-fit"
+                            :class="{
+                                'bg-emerald-50 text-emerald-700 border-emerald-100': batch.status === 'completed',
+                                'bg-amber-50 text-amber-700 border-amber-100': batch.status === 'processing',
+                                'bg-red-50 text-red-700 border-red-100': batch.status === 'failed',
+                                'bg-slate-50 text-slate-700 border-slate-100': batch.status === 'pending'
+                            }">
+                            <span class="w-1.5 h-1.5 rounded-full" :class="{
+                                'bg-emerald-500': batch.status === 'completed',
+                                'bg-amber-500': batch.status === 'processing',
+                                'bg-red-500': batch.status === 'failed',
+                                'bg-slate-500': batch.status === 'pending'
+                            }"></span>
+                            <span x-text="capitalize(batch.status)"></span>
+                        </span>
+                    </div>
+
+                    <!-- Progress -->
+                    <div class="col-span-1 md:col-span-2 flex items-center gap-2 md:block text-right">
+                        <span
+                            class="md:hidden text-xs font-semibold text-slate-500 uppercase w-20 text-left">Progress:</span>
+                        <div class="flex-1">
+                            <p class="text-sm font-medium text-slate-700">
+                                <span x-text="batch.completed_jobs"></span> / <span x-text="batch.total_jobs"></span>
+                            </p>
+                            <div class="w-full bg-slate-100 rounded-full h-1.5 mt-1.5 overflow-hidden">
+                                <div class="h-full rounded-full transition-all duration-500" :class="{
+                                        'bg-emerald-500': batch.status === 'completed',
+                                        'bg-amber-500': batch.status === 'processing',
+                                        'bg-red-500': batch.status === 'failed',
+                                        'bg-slate-400': batch.status === 'pending'
+                                    }"
+                                    :style="'width: ' + (batch.total_jobs > 0 ? (batch.completed_jobs / batch.total_jobs) * 100 : 0) + '%'">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Cost -->
+                    <div class="col-span-1 md:col-span-1 flex items-center gap-2 md:block text-right">
+                        <span
+                            class="md:hidden text-xs font-semibold text-slate-500 uppercase w-20 text-left">Cost:</span>
+                        <p class="font-semibold text-emerald-600 flex-1" x-text="formatCost(batch.cost.total_cost)"></p>
+                    </div>
+                </div>
+            </template>
+
+            <div x-show="!loading && batches.length === 0" class="py-16 text-center">
+                <div class="w-16 h-16 mx-auto mb-4 rounded-2xl bg-slate-50 flex items-center justify-center">
+                    <i data-lucide="folder-open" class="h-8 w-8 text-slate-300"></i>
+                </div>
+                <p class="font-medium text-slate-600 mb-1">No batches found</p>
+                <p class="text-sm text-slate-500">Upload documents to start a new batch</p>
+            </div>
+
+            <div x-show="loading && batches.length === 0" class="py-16 text-center">
+                <i data-lucide="loader-2" class="h-8 w-8 text-amber-500 animate-spin mx-auto mb-4"></i>
+                <p class="text-sm text-slate-500">Loading batches...</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('alpine:init', () => {
+        Alpine.data('batchesData', () => ({
+            batches: [],
+            loading: false,
+            init() {
+                this.refresh();
+            },
+            async refresh() {
+                this.loading = true;
+                try {
+                    const res = await fetch('/api/batches?limit=100');
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.batches = data.batches;
+                    }
+                } catch (e) { console.error("Failed to load batches", e); }
+                finally { this.loading = false; }
+            },
+            formatDate(dateStr) {
+                if (!dateStr) return '';
+                return new Date(dateStr).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+            },
+            formatTime(dateStr) {
+                if (!dateStr) return '';
+                return new Date(dateStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            },
+            formatCost(cost) {
+                if (!cost) return '$0.00';
+                if (cost < 0.01) return '$' + cost.toFixed(4);
+                return '$' + cost.toFixed(2);
+            },
+            capitalize(str) {
+                return str ? str.charAt(0).toUpperCase() + str.slice(1) : '';
+            }
+        }))
+    });
+</script>
+{% endblock %}

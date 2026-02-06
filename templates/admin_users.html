@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-8" x-data="{ showCreateModal: false, showPasswordModal: false, selectedUser: null }">
+    <div class="flex items-center justify-between">
+        <div>
+            <h2 class="text-2xl font-bold text-slate-800">User Management</h2>
+            <p class="text-slate-500 text-sm">Manage system access and roles</p>
+        </div>
+        <button @click="showCreateModal = true"
+            class="px-4 py-2 rounded-xl bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition-colors flex items-center gap-2">
+            <i data-lucide="plus" class="h-4 w-4"></i>
+            Create User
+        </button>
+    </div>
+
+    <!-- Users Table -->
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <table class="w-full text-sm text-left">
+            <thead
+                class="bg-slate-50 border-b border-slate-200 text-slate-500 font-medium uppercase tracking-wider text-xs">
+                <tr>
+                    <th class="px-6 py-4">ID</th>
+                    <th class="px-6 py-4">Username</th>
+                    <th class="px-6 py-4">Role</th>
+                    <th class="px-6 py-4">Created At</th>
+                    <th class="px-6 py-4 text-right">Actions</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+                {% for user in users %}
+                <tr class="hover:bg-slate-50/50 transition-colors">
+                    <td class="px-6 py-4 text-slate-500">#{{ user.id }}</td>
+                    <td class="px-6 py-4 font-medium text-slate-700">
+                        <div class="flex items-center gap-3">
+                            <div
+                                class="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 font-bold text-xs">
+                                {{ user.username[0] | upper }}
+                            </div>
+                            {{ user.username }}
+                        </div>
+                    </td>
+                    <td class="px-6 py-4">
+                        <span
+                            class="px-2 py-1 rounded-full text-xs font-semibold {{ 'bg-purple-100 text-purple-600' if user.role == 'admin' else 'bg-slate-100 text-slate-600' }}">
+                            {{ user.role }}
+                        </span>
+                    </td>
+                    <td class="px-6 py-4 text-slate-400">{{ user.created_at }}</td>
+                    <td class="px-6 py-4 text-right">
+                        <button
+                            @click="showPasswordModal = true; selectedUser = { id: {{ user.id }}, username: '{{ user.username }}' }"
+                            class="text-slate-400 hover:text-emerald-500 transition-colors" title="Change Password">
+                            <i data-lucide="key" class="h-4 w-4"></i>
+                        </button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Create User Modal -->
+    <div x-show="showCreateModal" style="display: none;"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm"
+        x-transition.opacity>
+        <div class="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-md p-6"
+            @click.away="showCreateModal = false">
+            <div class="flex items-center justify-between mb-6">
+                <h3 class="text-lg font-bold text-slate-800">Create New User</h3>
+                <button @click="showCreateModal = false" class="text-slate-400 hover:text-slate-600">
+                    <i data-lucide="x" class="h-5 w-5"></i>
+                </button>
+            </div>
+            <form action="/admin/users/create" method="POST" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Username</label>
+                    <input type="text" name="username" required
+                        class="w-full px-4 py-2 rounded-xl border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Password</label>
+                    <input type="password" name="password" required
+                        class="w-full px-4 py-2 rounded-xl border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Role</label>
+                    <select name="role"
+                        class="w-full px-4 py-2 rounded-xl border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none">
+                        <option value="user">User</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                </div>
+                <div class="pt-4 flex gap-3">
+                    <button type="button" @click="showCreateModal = false"
+                        class="flex-1 py-2 rounded-xl border border-slate-200 text-slate-600 font-medium hover:bg-slate-50">Cancel</button>
+                    <button type="submit"
+                        class="flex-1 py-2 rounded-xl bg-emerald-500 text-white font-medium hover:bg-emerald-600">Create
+                        User</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Change Password Modal -->
+    <div x-show="showPasswordModal" style="display: none;"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm"
+        x-transition.opacity>
+        <div class="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-md p-6"
+            @click.away="showPasswordModal = false">
+            <div class="flex items-center justify-between mb-6">
+                <div>
+                    <h3 class="text-lg font-bold text-slate-800">Change Password</h3>
+                    <p class="text-sm text-slate-500">For user: <span
+                            x-text="selectedUser && selectedUser.username"></span></p>
+                </div>
+                <button @click="showPasswordModal = false" class="text-slate-400 hover:text-slate-600">
+                    <i data-lucide="x" class="h-5 w-5"></i>
+                </button>
+            </div>
+            <form action="/admin/users/password" method="POST" class="space-y-4">
+                <input type="hidden" name="user_id" :value="selectedUser && selectedUser.id">
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">New Password</label>
+                    <input type="password" name="new_password" required
+                        class="w-full px-4 py-2 rounded-xl border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none">
+                </div>
+                <div class="pt-4 flex gap-3">
+                    <button type="button" @click="showPasswordModal = false"
+                        class="flex-1 py-2 rounded-xl border border-slate-200 text-slate-600 font-medium hover:bg-slate-50">Cancel</button>
+                    <button type="submit"
+                        class="flex-1 py-2 rounded-xl bg-emerald-500 text-white font-medium hover:bg-emerald-600">Update
+                        Password</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
