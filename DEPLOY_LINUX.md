@@ -69,7 +69,7 @@ Add the following configuration (replace values with your actual keys):
 
 ```ini
 # Gemini API Key (Required)
-GEMINI_API_KEY=AIzaSyAfZmnPzSIw9Zmn6XkDWHLoftK8rjst-xc
+GEMINI_API_KEY
 
 # Flask Secret Key (Generate a random string for production)
 SECRET_KEY=your_strong_random_secret_string
