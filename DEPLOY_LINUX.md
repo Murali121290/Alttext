@@ -150,28 +150,15 @@ With Docker, your application runs inside a container. However, for a production
 sudo apt install -y nginx
 ```
 
-### 2. Create Nginx Config
-Create a configuration file for your site:
+### 2. Configure Nginx
+Copy the provided configuration file to Nginx's sites-available directory:
 
 ```bash
+# Copy config from repo
+sudo cp nginx.conf /etc/nginx/sites-available/alttext
+
+# Edit the file to set your domain/IP if needed
 sudo nano /etc/nginx/sites-available/alttext
-```
-
-Paste the following configuration:
-
-```nginx
-server {
-    listen 80;
-    server_name your_domain_or_IP;  # Replace with actual Domain or Server IP
-
-    location / {
-        proxy_pass http://127.0.0.1:5000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
 ```
 
 ### 3. Enable the Site
