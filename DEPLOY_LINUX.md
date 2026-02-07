@@ -51,6 +51,12 @@ git clone https://github.com/Murali121290/Alttext.git
 cd Alttext
 ```
 
+> **Note on Authentication:**
+> If you see `Password authentication is not supported`, you need to use a **Personal Access Token (PAT)**.
+> 1. Go to GitHub -> Settings -> Developer Settings -> Personal access tokens -> Tokens (classic).
+> 2. Generate a new token with `repo` scope.
+> 3. Use this token as your **Password** when prompted in the terminal.
+
 ### 2. Configure Environment Variables
 
 Create a `.env` file in the root directory. You can copy the example if one exists, or create a new one.
