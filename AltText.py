@@ -50,14 +50,18 @@ def get_db_connection():
     
     # Try PostgreSQL first if configured
     if DB_TYPE == "postgres":
-        try:
-            conn = psycopg2.connect(DATABASE_URL)
-            return conn
-        except psycopg2.OperationalError:
-            print("\n[WARNING] PostgreSQL connection failed (Docker not running?).")
-            print("[INFO] Falling back to local SQLite database (alttext.db).\n")
-            DB_TYPE = "sqlite"
-            IS_SQLITE = True
+        for attempt in range(5):
+            try:
+                conn = psycopg2.connect(DATABASE_URL)
+                return conn
+            except psycopg2.OperationalError:
+                if attempt < 4:
+                    time.sleep(2)
+                    continue
+                print("\n[WARNING] PostgreSQL connection failed after retries (Docker not running?).")
+                print("[INFO] Falling back to local SQLite database (alttext.db).\n")
+                DB_TYPE = "sqlite"
+                IS_SQLITE = True
             
     # Fallback to SQLite
     conn = sqlite3.connect("alttext.db")
@@ -186,10 +190,15 @@ def init_db():
              cur.execute(f"SELECT * FROM users WHERE username = {placeholder}", ('admin',))
              
         if not cur.fetchone():
-            enc_pw = generate_password_hash("admin123")
-            cur.execute(f"INSERT INTO users (username, password, role) VALUES ({placeholder}, {placeholder}, {placeholder})", 
-                          ('admin', enc_pw, 'admin'))
-            conn.commit()
+            try:
+                enc_pw = generate_password_hash("admin123")
+                cur.execute(f"INSERT INTO users (username, password, role) VALUES ({placeholder}, {placeholder}, {placeholder})", 
+                              ('admin', enc_pw, 'admin'))
+                conn.commit()
+            except (sqlite3.IntegrityError, psycopg2.errors.UniqueViolation, psycopg2.IntegrityError):
+                # Another worker likely created the user already
+                conn.rollback()
+                pass
         print(f"Database initialized using {'SQLite' if IS_SQLITE else 'PostgreSQL'}")
     except Exception as e:
         print(f"DB Init Error: {e}")
@@ -400,89 +409,111 @@ def process_pdf_chunk(chunk_path, start_page):
     total_out = 0
     
     for page_index, page in enumerate(doc):
-        # Extract images
-        image_list = page.get_images(full=True)
         absolute_page_num = start_page + page_index + 1
+        print(f"  Processing Page {absolute_page_num}...")
         
-        print(f"  Page {absolute_page_num}: Found {len(image_list)} images")
+        # Render the full page to an image
+        # matrix=fitz.Matrix(2, 2) renders at 2x zoom (approx 144 DPI) for better clarity
+        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+        img_data = pix.tobytes("png")
         
-        for img_index, img in enumerate(image_list):
-            xref = img[0]
-            base_image = doc.extract_image(xref)
-            image_bytes = base_image["image"]
+        # --- GEMINI CALL ---
+        try:
+            image = Image.open(io.BytesIO(img_data))
             
-            # --- GEMINI CALL ---
-            try:
-                # We need to re-encode to ensure compatible format (PNG/JPEG)
-                image = Image.open(io.BytesIO(image_bytes))
+            # Convert to RGB if needed
+            if image.mode != "RGB":
+                image = image.convert("RGB")
                 
-                # Convert to RGB (remove alpha/CMYK)
-                if image.mode != "RGB":
-                    image = image.convert("RGB")
-                    
-                # Resize if too large (Gemini limit)
-                if image.width > 3072 or image.height > 3072:
-                    image.thumbnail((3072, 3072))
-                    
-                prompt = """
-                Describe this image specifically for alt text accessibility.
-                1. Provide a 'Short Alt Text' (max 1 sentence).
-                2. Provide a 'Long Alt Text' (detailed description).
-                3. Classify context: 'Scientific', 'Diagram', 'Photo', 'Chart', 'Other'.
-                4. Estimate domain: 'Medical', 'Engineering', 'General'.
-                
-                Return JSON format:
-                {
-                    "short_alt": "...",
-                    "long_alt": "...",
-                    "context_type": "...",
-                    "domain": "..."
-                }
-                """
-                
-                if not GEMINI_API_KEY:
-                    raise ValueError("GEMINI_API_KEY not set")
+            # Resize if absolutely massive (rare for pages but good safety)
+            if image.width > 3072 or image.height > 3072:
+                image.thumbnail((3072, 3072))
+            
+            # Use the Centralized System Prompt
+            prompt = SYSTEM_PROMPT
+            
+            if not GEMINI_API_KEY:
+                raise ValueError("GEMINI_API_KEY not set")
 
-                genai.configure(api_key=GEMINI_API_KEY)
-                model = genai.GenerativeModel('gemini-3-pro-preview')
+            genai.configure(api_key=GEMINI_API_KEY)
+            model = genai.GenerativeModel('gemini-3-pro-preview') # Using 1.5 Pro for better vision reasoning
+            
+            # Add explicit instruction for current page number context
+            context_prompt = f"This is Page {absolute_page_num} of the document.\n\n" + prompt
+            
+            response = model.generate_content([context_prompt, image])
+            
+            # Parse usage
+            if response.usage_metadata:
+                total_in += response.usage_metadata.prompt_token_count
+                total_out += response.usage_metadata.candidates_token_count
+            
+            # Parse JSON
+            text_resp = response.text.strip()
+            
+            # Robust JSON extraction to handle conversational text
+            import re
+            json_str = text_resp
+            
+            # 1. Try to find markdown code block
+            code_block = re.search(r'```(?:json)?\s*(.*?)```', text_resp, re.DOTALL)
+            if code_block:
+                json_str = code_block.group(1).strip()
+            else:
+                # 2. Heuristic: find first '[' or '{' and last ']' or '}'
+                # This handles text like "Here is the JSON: [...]"
+                start_idx_list = text_resp.find('[')
+                start_idx_obj = text_resp.find('{')
                 
-                response = model.generate_content([prompt, image])
+                start_idx = -1
+                end_chars = ''
                 
-                # Parse usage
-                if response.usage_metadata:
-                    total_in += response.usage_metadata.prompt_token_count
-                    total_out += response.usage_metadata.candidates_token_count
-                
-                # Parse JSON
-                import json
-                text_resp = response.text.strip()
-                # Clean markdown code blocks
-                if text_resp.startswith("```json"):
-                    text_resp = text_resp[7:-3]
-                elif text_resp.startswith("```"):
-                     text_resp = text_resp[3:-3]
+                if start_idx_list != -1 and (start_idx_obj == -1 or start_idx_list < start_idx_obj):
+                     start_idx = start_idx_list
+                     end_chars = ']'
+                elif start_idx_obj != -1:
+                     start_idx = start_idx_obj
+                     end_chars = '}'
                      
-                data = json.loads(text_resp)
-                
+                if start_idx != -1:
+                    last_idx = text_resp.rfind(end_chars)
+                    if last_idx != -1 and last_idx > start_idx:
+                        json_str = text_resp[start_idx:last_idx+1]
+
+            # Handle potential empty response or non-list
+            try:
+                data = json.loads(json_str)
+            except json.JSONDecodeError:
+                print(f"JSON Decode Error on page {absolute_page_num}. Extracted: {json_str[:100]}... Raw: {text_resp[:100]}...")
+                # Attempt to fix common issues or just return empty
+                data = []
+
+            if isinstance(data, dict):
+                data = [data] # Handle single object return edge case
+            
+            for item in data:
+                # Ensure fields exist
                 items.append({
-                    "page": absolute_page_num,
-                    "figure_number": f"Fig {absolute_page_num}.{img_index+1}",
-                    "short_alt": data.get("short_alt", ""),
-                    "long_alt": data.get("long_alt", ""),
-                    "context_type": data.get("context_type", ""),
-                    "domain": data.get("domain", "")
+                    "page": absolute_page_num, # Force correct page number
+                    "figure_number": item.get("figure_number", "Unknown"),
+                    "short_alt": item.get("short_alt", ""),
+                    "long_alt": item.get("long_alt", ""),
+                    "context_type": item.get("context_type", ""),
+                    "domain": item.get("domain", "")
                 })
-                
-            except Exception as e:
-                print(f"Gemini Error on page {absolute_page_num}: {e}")
-                items.append({
-                    "page": absolute_page_num,
-                    "figure_number": f"Fig {absolute_page_num}.{img_index+1}",
-                    "short_alt": "Error processing image",
-                    "long_alt": str(e),
-                    "context_type": "Error",
-                    "domain": "Error"
-                })
+
+            print(f"    Found {len(data)} items on page {absolute_page_num}")
+            
+        except Exception as e:
+            print(f"Gemini Error on page {absolute_page_num}: {e}")
+            items.append({
+                "page": absolute_page_num,
+                "figure_number": "Error",
+                "short_alt": "Error processing page",
+                "long_alt": str(e),
+                "context_type": "Error",
+                "domain": "Error"
+            })
 
     return items, total_in, total_out
 
