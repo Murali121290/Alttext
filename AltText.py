@@ -326,11 +326,16 @@ def admin_dashboard():
     total_cost_res = query_db("SELECT SUM(cost) as sum FROM jobs", one=True)
     total_cost = total_cost_res['sum'] if total_cost_res and total_cost_res['sum'] else 0.0
     
+    # Role stats for the chart
+    roles_res = query_db("SELECT role, COUNT(*) as count FROM users GROUP BY role")
+    role_stats = {r['role']: r['count'] for r in roles_res} if roles_res else {}
+
     stats = {
         "user_count": user_count,
         "batch_count": batch_count,
         "job_count": job_count,
-        "total_cost": total_cost
+        "total_cost": total_cost,
+        "role_stats": role_stats
     }
     return render_template("admin_dashboard.html", active_page='admin', stats=stats)
 
@@ -341,22 +346,34 @@ def admin_users():
     users = query_db("SELECT id, username, role, created_at FROM users ORDER BY created_at DESC")
     return render_template("admin_users.html", active_page='admin_users', users=users)
 
-@app.route("/admin/users/create", methods=["POST"])
+from flask import Flask, request, send_file, jsonify, render_template, g, redirect as flask_redirect, flash, url_for
+
+# ... (imports remain the same, just ensured flash is imported)
+
+@app.route("/admin/users/create", methods=["GET", "POST"])
 @login_required
 @admin_required
 def admin_create_user():
+    if request.method == "GET":
+        return render_template("admin_create_user.html", active_page='admin_users')
+
     username = request.form.get("username")
     password = request.form.get("password")
     role = request.form.get("role", "user")
     
     try:
+        if query_db("SELECT id FROM users WHERE username = %s", (username,), one=True):
+             flash(f"Username '{username}' already exists.", "error")
+             return flask_redirect("/admin/users/create")
+
         hashed = generate_password_hash(password)
         query_db("INSERT INTO users (username, password, role) VALUES (%s, %s, %s)", 
                 (username, hashed, role), commit=True)
+        flash(f"User '{username}' created successfully.", "success")
         return flask_redirect("/admin/users")
     except Exception as e:
-        # Ideally flash message
-        return str(e), 400
+        flash(f"Error creating user: {e}", "error")
+        return flask_redirect("/admin/users/create")
 
 @app.route("/admin/users/password", methods=["POST"])
 @login_required
@@ -365,9 +382,83 @@ def admin_change_password():
     user_id = request.form.get("user_id")
     new_password = request.form.get("new_password")
     
-    hashed = generate_password_hash(new_password)
-    query_db("UPDATE users SET password = %s WHERE id = %s", (hashed, user_id), commit=True)
+    try:
+        hashed = generate_password_hash(new_password)
+        query_db("UPDATE users SET password = %s WHERE id = %s", (hashed, user_id), commit=True)
+        flash("Password updated successfully.", "success")
+    except Exception as e:
+        flash(f"Error updating password: {e}", "error")
+        
     return flask_redirect("/admin/users")
+
+@app.route("/admin/users/role", methods=["POST"])
+@login_required
+@admin_required
+def admin_change_role():
+    user_id = request.form.get("user_id")
+    role = request.form.get("role")
+    
+    try:
+        query_db("UPDATE users SET role = %s WHERE id = %s", (role, user_id), commit=True)
+        flash(f"Role updated to '{role}'.", "success")
+    except Exception as e:
+        flash(f"Error updating role: {e}", "error")
+        
+    return flask_redirect("/admin/users")
+
+@app.route("/admin/users/delete/<int:user_id>", methods=["POST"])
+@login_required
+@admin_required
+def admin_delete_user(user_id):
+    if user_id == current_user.id:
+        flash("Cannot delete yourself.", "error")
+        return flask_redirect("/admin/users")
+        
+    try:
+        query_db("DELETE FROM users WHERE id = %s", (user_id,), commit=True)
+        flash("User deleted successfully.", "success")
+    except Exception as e:
+        flash(f"Error deleting user: {e}", "error")
+        
+    return flask_redirect("/admin/users")
+
+@app.route("/admin/files", methods=["GET"])
+@login_required
+@admin_required
+def admin_files():
+    # Listing all jobs as 'files'
+    page = request.args.get('page', 1, type=int)
+    per_page = 20
+    offset = (page - 1) * per_page
+    
+    jobs = query_db("""
+        SELECT j.*, b.name as batch_name 
+        FROM jobs j 
+        LEFT JOIN batches b ON j.batch_id = b.id 
+        ORDER BY j.created_at DESC 
+        LIMIT %s OFFSET %s
+    """, (per_page, offset))
+    
+    total_jobs = query_db("SELECT COUNT(*) as count FROM jobs", one=True)['count']
+    total_pages = (total_jobs + per_page - 1) // per_page
+    
+    return render_template("admin_files.html", active_page='admin_files', files=jobs, page=page, total_pages=total_pages)
+
+@app.route("/admin/stats", methods=["GET"])
+@login_required
+@admin_required
+def admin_stats():
+    # Detailed stats
+    stats = {}
+    stats['total_users'] = query_db("SELECT COUNT(*) as count FROM users", one=True)['count']
+    stats['total_batches'] = query_db("SELECT COUNT(*) as count FROM batches", one=True)['count']
+    stats['total_jobs'] = query_db("SELECT COUNT(*) as count FROM jobs", one=True)['count']
+    stats['total_cost'] = query_db("SELECT SUM(cost) as sum FROM jobs", one=True)['sum'] or 0.0
+    
+    # Recent activity (last 5 batches)
+    recent_batches = query_db("SELECT * FROM batches ORDER BY created_at DESC LIMIT 5")
+    
+    return render_template("admin_stats.html", active_page='admin_stats', stats=stats, recent_batches=recent_batches)
 
 # ---------------- CORE LOGIC ----------------
 

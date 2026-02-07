@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-8">
+    <div class="flex items-center justify-between">
+        <div>
+            <h2 class="text-2xl font-bold text-slate-800">System Statistics</h2>
+            <p class="text-slate-500 text-sm">Overview of system performance and usage</p>
+        </div>
+    </div>
+
+    <!-- Stats Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <div class="flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center text-blue-500">
+                    <i data-lucide="users" class="h-6 w-6"></i>
+                </div>
+                <div>
+                    <p class="text-sm font-medium text-slate-500">Total Users</p>
+                    <p class="text-2xl font-bold text-slate-800">{{ stats.total_users }}</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <div class="flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-purple-50 flex items-center justify-center text-purple-500">
+                    <i data-lucide="layers" class="h-6 w-6"></i>
+                </div>
+                <div>
+                    <p class="text-sm font-medium text-slate-500">Total Batches</p>
+                    <p class="text-2xl font-bold text-slate-800">{{ stats.total_batches }}</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <div class="flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-amber-50 flex items-center justify-center text-amber-500">
+                    <i data-lucide="file-text" class="h-6 w-6"></i>
+                </div>
+                <div>
+                    <p class="text-sm font-medium text-slate-500">Total Jobs</p>
+                    <p class="text-2xl font-bold text-slate-800">{{ stats.total_jobs }}</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <div class="flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-500">
+                    <i data-lucide="dollar-sign" class="h-6 w-6"></i>
+                </div>
+                <div>
+                    <p class="text-sm font-medium text-slate-500">Total Cost</p>
+                    <p class="text-2xl font-bold text-slate-800">${{ "%.2f"|format(stats.total_cost) }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Batches -->
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="p-6 border-b border-slate-100 flex items-center justify-between">
+            <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <i data-lucide="history" class="h-5 w-5 text-indigo-500"></i> Recent Batches
+            </h3>
+            <a href="{{ url_for('admin_files') }}"
+                class="text-sm text-indigo-600 hover:text-indigo-700 font-medium">View All Jobs &rarr;</a>
+        </div>
+
+        {% if recent_batches %}
+        <table class="w-full text-sm text-left">
+            <thead
+                class="bg-slate-50 border-b border-slate-200 text-slate-500 font-medium uppercase tracking-wider text-xs">
+                <tr>
+                    <th class="px-6 py-4">ID</th>
+                    <th class="px-6 py-4">Batch Name</th>
+                    <th class="px-6 py-4">Status</th>
+                    <th class="px-6 py-4">Created At</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+                {% for batch in recent_batches %}
+                <tr class="hover:bg-slate-50/50 transition-colors">
+                    <td class="px-6 py-4 text-slate-500">#{{ batch.id }}</td>
+                    <td class="px-6 py-4 font-medium text-slate-700">{{ batch.name }}</td>
+                    <td class="px-6 py-4">
+                        {% if batch.status == 'completed' %}
+                        <span
+                            class="px-2 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-600">Completed</span>
+                        {% elif batch.status == 'processing' %}
+                        <span
+                            class="px-2 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-600">Processing</span>
+                        {% elif batch.status == 'failed' %}
+                        <span class="px-2 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-600">Failed</span>
+                        {% else %}
+                        <span
+                            class="px-2 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">Pending</span>
+                        {% endif %}
+                    </td>
+                    <td class="px-6 py-4 text-slate-400">{{ batch.created_at }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="p-8 text-center text-slate-500">
+            No recent batches found.
+        </div>
+        {% endif %}
+    </div>
+
+</div>
+{% endblock %}

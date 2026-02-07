@@ -69,7 +69,7 @@ Add the following configuration (replace values with your actual keys):
 
 ```ini
 # Gemini API Key (Required)
-GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_API_KEY=AIzaSyAfZmnPzSIw9Zmn6XkDWHLoftK8rjst-xc
 
 # Flask Secret Key (Generate a random string for production)
 SECRET_KEY=your_strong_random_secret_string
@@ -166,6 +166,14 @@ sudo cp nginx.conf /etc/nginx/sites-available/alttext
 # Edit the file to set your domain/IP if needed
 sudo nano /etc/nginx/sites-available/alttext
 ```
+
+# 1. Pull the latest change
+git pull origin main
+# 2. Update the system-wide configuration
+sudo cp nginx.conf /etc/nginx/sites-available/alttext
+# 3. Reload Nginx
+sudo systemctl reload nginx
+
 
 ### 3. Enable the Site
 Link the file to `sites-enabled` and remove the default:

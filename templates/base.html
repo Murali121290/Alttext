@@ -73,15 +73,7 @@
             <!-- Logo -->
             <div class="h-20 flex items-center justify-between px-6 border-b border-slate-100">
                 <div class="flex items-center gap-3">
-                    <div class="relative">
-                        <div
-                            class="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-500/20">
-                            <i data-lucide="image" class="h-5 w-5 text-white"></i>
-                        </div>
-                        <div
-                            class="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-400 border-2 border-white">
-                        </div>
-                    </div>
+                    <img src="/static/images/S4c.png" alt="Logo" class="h-10">
                     <div>
                         <h1 class="text-lg font-bold text-slate-800 tracking-tight">Alt Text Gen</h1>
                         <p class="text-[11px] text-slate-400 font-medium tracking-wide uppercase">AI Accessibility</p>
@@ -224,6 +216,26 @@
             </header>
 
             <main class="p-6 lg:p-8">
+                <!-- Flash Messages -->
+                {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                <div class="mb-6 space-y-2">
+                    {% for category, message in messages %}
+                    <div
+                        class="px-4 py-3 rounded-xl border flex items-center gap-3 shadow-sm
+                                    {{ 'bg-emerald-50 border-emerald-200 text-emerald-700' if category == 'success' else 'bg-red-50 border-red-200 text-red-700' }}">
+                        {% if category == 'success' %}
+                        <i data-lucide="check-circle" class="h-5 w-5 flex-shrink-0"></i>
+                        {% else %}
+                        <i data-lucide="alert-circle" class="h-5 w-5 flex-shrink-0"></i>
+                        {% endif %}
+                        <span class="text-sm font-medium">{{ message }}</span>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                {% endwith %}
+
                 {% block content %}{% endblock %}
             </main>
         </div>
