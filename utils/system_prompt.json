@@ -10,7 +10,8 @@
                     "- **Purpose**: Decorative, Illustrative, Instructional, or Assessment.",
                     "- **Audience**: Identify if the content is Elementary, High School, College/Professional, or General Public.",
                     "- **Image Type**: Photograph, Illustration, Diagram, Graph, Map, Table, Text-only, Mathematics, or Display Equation.",
-                    "- **Exclusions**: Do NOT identify or generate entries for author portraits/headshots, biographical content, publishing logos, or simple page design elements (borders, partial icons)."
+                    "- **Inclusions**: Identify ALL visual content (photos, diagrams, screenshots, icons, charts) regardless of whether they have a caption or figure number.",
+                    "- **Exclusions**: Exclude only *purely* decorative elements like page borders, background patterns, or page numbers. Do NOT exclude logos, portraits, or unlabelled images if they convey information."
                 ]
             },
             {
@@ -29,6 +30,7 @@
                     "**A. Description Length & Content:**",
                     "- **Decorative**: Return 'Decorative' or a specific flag.",
                     "- **Caption Redundancy**: If caption covers it, output 'Refer to caption'.",
+                    "- **Missing Captions**: If an image has no caption or figure number, DO NOT SKIP IT. Generate a full description based on visual content.",
                     "- **Instructional**: Provide detailed, structured descriptions.",
                     "**B. Content & Style:**",
                     "- **Objectivity**: Describe visible elements only. No subjective language.",
@@ -61,7 +63,7 @@
                     "For each image, provide:",
                     "1.  **Page Number**: Relative to fragment.",
                     "1.  **Page Number**: Relative to fragment.",
-                    "2.  **Figure Number**: Label or sequential ID. Use suffixes for sub-figures (e.g., 'Figure 1A').",
+                    "2.  **Figure Number**: Label or sequential ID. If no label is present, use 'Unlabeled Image [ID]'. Use suffixes for sub-figures (e.g., 'Figure 1A').",
                     "3.  **Short Alt Text**: Max 125 chars.",
                     "4.  **Long Alt Text**: Detailed description adhering to domain rules.",
                     "5.  **Context Type**: (e.g., Instructional, Decorative)",
