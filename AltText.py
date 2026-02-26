@@ -9,9 +9,9 @@ import datetime
 import time
 from concurrent.futures import ThreadPoolExecutor
 from PIL import Image
-from flask import Flask, request, send_file, jsonify, render_template, g, redirect as flask_redirect
+from flask import Flask, request, send_file, jsonify, render_template, g, redirect as flask_redirect, flash, url_for
 from openpyxl import Workbook
-import google.generativeai as genai
+import google.genai as genai
 from utils.prompt_assets import SYSTEM_PROMPT
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
@@ -23,9 +23,9 @@ import json
 import re
 
 load_dotenv()
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# genai.configure is no longer needed in new SDK, using Client instead.
 # Using a valid model from the available list or user preference
-MODEL_NAME = "gemini-3-pro-preview" 
+MODEL_NAME = "gemini-3-flash-preview" 
 
 UPLOAD_FOLDER = "uploads"
 OUTPUT_FOLDER = "outputs"
@@ -346,10 +346,6 @@ def admin_users():
     users = query_db("SELECT id, username, role, created_at FROM users ORDER BY created_at DESC")
     return render_template("admin_users.html", active_page='admin_users', users=users)
 
-from flask import Flask, request, send_file, jsonify, render_template, g, redirect as flask_redirect, flash, url_for
-
-# ... (imports remain the same, just ensured flash is imported)
-
 @app.route("/admin/users/create", methods=["GET", "POST"])
 @login_required
 @admin_required
@@ -526,22 +522,24 @@ def process_pdf_chunk(chunk_path, start_page):
             if not GEMINI_API_KEY:
                 raise ValueError("GEMINI_API_KEY not set")
 
-            genai.configure(api_key=GEMINI_API_KEY)
-            model = genai.GenerativeModel('gemini-3-pro-preview') # Using 1.5 Pro for better vision reasoning
+            client = genai.Client(api_key=GEMINI_API_KEY)
             
             # Add explicit instruction for current page number context
             context_prompt = f"This is Page {absolute_page_num} of the document.\n\n" + prompt
             
-            response = model.generate_content([context_prompt, image])
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=[context_prompt, image]
+            )
             
             # Parse usage
             if response.usage_metadata:
-                total_in += response.usage_metadata.prompt_token_count
-                total_out += response.usage_metadata.candidates_token_count
+                total_in += (response.usage_metadata.prompt_token_count or 0)
+                total_out += (response.usage_metadata.candidates_token_count or 0)
             
             # Parse JSON
             text_resp = response.text.strip()
-            
+
             # Robust JSON extraction to handle conversational text
             import re
             json_str = text_resp
@@ -645,7 +643,7 @@ def run_batch_processing(batch_id, files_info):
                     
                 doc = fitz.open(filepath)
                 total_pages = len(doc)
-                MAX_PAGES_PER_CHUNK = 2 # Reduced for better parallelism
+                MAX_PAGES_PER_CHUNK = 10 # Reduced for better parallelism
                 
                 chunk_args = []
                 for start in range(0, total_pages, MAX_PAGES_PER_CHUNK):
@@ -996,4 +994,4 @@ def get_token_stats_route():
     })
 
 if __name__ == "__main__":
-    app.run(debug=True, host='0.0.0.0')
+    app.run(debug=True, host='0.0.0.0', use_reloader=False)
