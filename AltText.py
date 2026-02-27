@@ -13,9 +13,22 @@ from flask import Flask, request, send_file, jsonify, render_template, g, redire
 from openpyxl import Workbook
 import google.genai as genai
 from utils.prompt_assets import SYSTEM_PROMPT
+from utils.qc_prompt import QC_VALIDATION_PROMPT
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from functools import wraps
+import logging
+
+# ---------------- LOGGING CONFIG ----------------
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("alttext_processing.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # ---------------- CONFIG ----------------
 from dotenv import load_dotenv
@@ -483,28 +496,20 @@ def clean_alt_text(text):
     
     return text
 
-def process_pdf_chunk(chunk_path, start_page):
+def process_single_image(img_data, absolute_page_num, run_qc=False):
     """
-    Process a small chunk of PDF pages.
+    Process a single rendered PDF page image.
     Returns: (list of dicts, input_tokens, output_tokens)
     """
-    print(f"Processing chunk: {chunk_path}")
-    doc = fitz.open(chunk_path)
+    logger.info(f"  Processing Page {absolute_page_num}... (QC: {run_qc})")
     
     items = []
     total_in = 0
     total_out = 0
     
-    for page_index, page in enumerate(doc):
-        absolute_page_num = start_page + page_index + 1
-        print(f"  Processing Page {absolute_page_num}...")
-        
-        # Render the full page to an image
-        # matrix=fitz.Matrix(2, 2) renders at 2x zoom (approx 144 DPI) for better clarity
-        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-        img_data = pix.tobytes("png")
-        
-        # --- GEMINI CALL ---
+    # --- GEMINI CALL ---
+    MAX_RETRIES = 5
+    for attempt in range(MAX_RETRIES):
         try:
             image = Image.open(io.BytesIO(img_data))
             
@@ -573,7 +578,7 @@ def process_pdf_chunk(chunk_path, start_page):
             try:
                 data = json.loads(json_str)
             except json.JSONDecodeError:
-                print(f"JSON Decode Error on page {absolute_page_num}. Extracted: {json_str[:100]}... Raw: {text_resp[:100]}...")
+                logger.error(f"JSON Decode Error on page {absolute_page_num}. Extracted: {json_str[:100]}... Raw: {text_resp[:100]}...")
                 # Attempt to fix common issues or just return empty
                 data = []
 
@@ -591,10 +596,73 @@ def process_pdf_chunk(chunk_path, start_page):
                     "domain": item.get("domain", "")
                 })
 
-            print(f"    Found {len(data)} items on page {absolute_page_num}")
+            if run_qc:
+                logger.info(f"    Running QC for {len(items)} items on page {absolute_page_num}")
+                validated_items = []
+                for item in items:
+                    qc_item = dict(item)
+                    if not item.get("long_alt"):
+                        validated_items.append(qc_item)
+                        continue
+                        
+                    try:
+                        qc_prompt_text = QC_VALIDATION_PROMPT.replace("{alt_text}", item.get("long_alt"))
+                        # Re-using the same image and client
+                        qc_response = client.models.generate_content(
+                            model=MODEL_NAME,
+                            contents=[qc_prompt_text, image]
+                        )
+                        
+                        if qc_response.usage_metadata:
+                            total_in += (qc_response.usage_metadata.prompt_token_count or 0)
+                            total_out += (qc_response.usage_metadata.candidates_token_count or 0)
+                            
+                        qc_text = qc_response.text.strip()
+                        
+                        # Extract JSON
+                        code_block = re.search(r'```(?:json)?\s*(.*?)```', qc_text, re.DOTALL)
+                        qc_json_str = code_block.group(1).strip() if code_block else qc_text
+                        
+                        start_idx = qc_json_str.find('{')
+                        last_idx = qc_json_str.rfind('}')
+                        if start_idx != -1 and last_idx != -1 and last_idx >= start_idx:
+                            qc_json_str = qc_json_str[start_idx:last_idx+1]
+                            
+                        qc_data = json.loads(qc_json_str)
+                        qc_item["qc_completeness"] = qc_data.get("completeness_score", "")
+                        qc_item["qc_accuracy"] = qc_data.get("scientific_accuracy_score", "")
+                        qc_item["qc_pedagogy"] = qc_data.get("pedagogical_adequacy_score", "")
+                        qc_item["qc_decision"] = qc_data.get("final_decision", "")
+                        qc_item["qc_justification"] = qc_data.get("justification", "")
+                        qc_item["qc_revised_alt"] = qc_data.get("revised_alt_text", "")
+                        
+                    except Exception as e:
+                        logger.error(f"QC Validation failed for item on page {absolute_page_num}: {e}")
+                        qc_item["qc_completeness"] = "Error"
+                        qc_item["qc_accuracy"] = "Error"
+                        qc_item["qc_pedagogy"] = "Error"
+                        qc_item["qc_decision"] = "Error"
+                        qc_item["qc_justification"] = str(e)
+                        qc_item["qc_revised_alt"] = ""
+                        
+                    validated_items.append(qc_item)
+                items = validated_items
+
+            logger.info(f"    Found {len(items)} items on page {absolute_page_num}")
+            break # Success, exit retry loop
             
         except Exception as e:
-            print(f"Gemini Error on page {absolute_page_num}: {e}")
+            error_msg = str(e)
+            if "429" in error_msg or "502" in error_msg or "500" in error_msg or "503" in error_msg or "quota" in error_msg.lower():
+                logger.warning(f"Gemini API rate limit/server error on page {absolute_page_num} (Attempt {attempt+1}/{MAX_RETRIES}): {e}")
+                if attempt < MAX_RETRIES - 1:
+                    sleep_time = (attempt + 1) * 3 # Exponential/Linear backoff: 3s, 6s, 9s, 12s
+                    logger.info(f"Waiting {sleep_time} seconds before retrying page {absolute_page_num}...")
+                    time.sleep(sleep_time)
+                    continue
+            
+            # If not a retryable error or max retries reached:
+            logger.error(f"Gemini Error on page {absolute_page_num} after {attempt + 1} attempts: {e}")
             items.append({
                 "page": absolute_page_num,
                 "figure_number": "Error",
@@ -603,6 +671,7 @@ def process_pdf_chunk(chunk_path, start_page):
                 "context_type": "Error",
                 "domain": "Error"
             })
+            break # Exit retry loop on fatal error
 
     return items, total_in, total_out
 
@@ -614,14 +683,12 @@ def calculate_cost(input_tokens, output_tokens):
     cost_out = (output_tokens / 1_000_000) * 1.05
     return cost_in + cost_out
 
-def run_batch_processing(batch_id, files_info):
+def run_batch_processing(batch_id, files_info, run_qc=False):
     """
     files_info: list of (filename, file_path)
     Runs in a background thread.
     """
-    import sys
-    print(f"Starting batch {batch_id} with {len(files_info)} files. DB Type: {DB_TYPE}, SQLite: {IS_SQLITE}")
-    sys.stdout.flush()
+    logger.info(f"Starting batch {batch_id} with {len(files_info)} files (QC: {run_qc}). DB Type: {DB_TYPE}, SQLite: {IS_SQLITE}")
     
     # Establish new DB connection for this thread
     conn = get_db_connection()
@@ -630,34 +697,27 @@ def run_batch_processing(batch_id, files_info):
         query_db("UPDATE batches SET status = 'processing' WHERE id = %s", (batch_id,), commit=True, conn=conn)
         
         for job_id, filepath in files_info:
-            print(f"Processing job {job_id}: {filepath}")
-            sys.stdout.flush()
+            logger.info(f"Processing job {job_id}: {filepath}")
             
             query_db("UPDATE jobs SET status = 'processing' WHERE id = %s", (job_id,), commit=True, conn=conn)
             
             doc = None
             try:
-                # 1. Split and Process PDF
+                # 1. Provide Pages and Process PDF
                 if not os.path.exists(filepath):
                     raise FileNotFoundError(f"File not found: {filepath}")
                     
                 doc = fitz.open(filepath)
-                total_pages = len(doc)
-                MAX_PAGES_PER_CHUNK = 10 # Reduced for better parallelism
                 
-                chunk_args = []
-                for start in range(0, total_pages, MAX_PAGES_PER_CHUNK):
-                    end = min(start + MAX_PAGES_PER_CHUNK, total_pages)
-                    c_name = f"chunk_{job_id}_{start}.pdf"
-                    c_path = os.path.join(UPLOAD_FOLDER, c_name)
-                    
-                    sub = fitz.open()
-                    sub.insert_pdf(doc, from_page=start, to_page=end-1)
-                    sub.save(c_path)
-                    sub.close()
-                    chunk_args.append((c_path, start))
+                # Render all pages to memory first
+                pages_data = []
+                for page_index, page in enumerate(doc):
+                    absolute_page_num = page_index + 1
+                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                    img_data = pix.tobytes("png")
+                    pages_data.append((img_data, absolute_page_num))
                 
-                # Close main doc to free file lock
+                # Close main doc after rendering all pages to memory to free file lock
                 doc.close()
                 doc = None 
                 
@@ -665,41 +725,38 @@ def run_batch_processing(batch_id, files_info):
                 total_in = 0
                 total_out = 0
                 
-                # Parallel processing of chunks
-                from concurrent.futures import as_completed
+                # Parallel processing of individual pages
+                from concurrent.futures import as_completed, ThreadPoolExecutor
                 with ThreadPoolExecutor(max_workers=5) as executor:
-                    future_to_chunk = {
-                        executor.submit(process_pdf_chunk, c_path, offset): c_path 
-                        for c_path, offset in chunk_args
+                    future_to_page = {
+                        executor.submit(process_single_image, img_data, absolute_page_num, run_qc): absolute_page_num 
+                        for img_data, absolute_page_num in pages_data
                     }
                     
-                    for future in as_completed(future_to_chunk):
-                        c_path = future_to_chunk[future]
+                    for future in as_completed(future_to_page):
+                        absolute_page_num = future_to_page[future]
                         try:
                             items, i_tok, o_tok = future.result()
                             all_items.extend(items)
                             total_in += i_tok
                             total_out += o_tok
                         except Exception as e:
-                            print(f"Chunk processing failed for {c_path}: {e}")
-                        finally:
-                            # Ensure chunk is removed
-                            if os.path.exists(c_path):
-                                try:
-                                    os.remove(c_path)
-                                except: pass
+                            logger.error(f"Page processing failed for page {absolute_page_num}: {e}")
 
                 # 2. Generate Excel
                 wb = Workbook()
                 ws = wb.active
                 ws.title = "Alt Text"
-                ws.append(["File name", "Figure number", "Page number", "Short alt text", "Long alt text", "Context Type", "Domain"])
+                headers = ["File name", "Figure number", "Page number", "Short alt text", "Long alt text", "Context Type", "Domain"]
+                if run_qc:
+                    headers.extend(["QC Completeness", "QC Accuracy", "QC Pedagogy", "QC Decision", "QC Justification", "Revised Alt Text"])
+                ws.append(headers)
                 
                 all_items.sort(key=lambda x: x.get("page", 0))
                 
                 filename = os.path.basename(filepath)
                 for item in all_items:
-                    ws.append([
+                    row = [
                         filename,
                         item.get("figure_number", "unknown"),
                         item.get("page", "unknown"),
@@ -707,7 +764,17 @@ def run_batch_processing(batch_id, files_info):
                         clean_alt_text(item.get("long_alt", "")),
                         item.get("context_type", "General"),
                         item.get("domain", "General")
-                    ])
+                    ]
+                    if run_qc:
+                        row.extend([
+                            item.get("qc_completeness", ""),
+                            item.get("qc_accuracy", ""),
+                            item.get("qc_pedagogy", ""),
+                            item.get("qc_decision", ""),
+                            item.get("qc_justification", ""),
+                            clean_alt_text(item.get("qc_revised_alt", ""))
+                        ])
+                    ws.append(row)
                 
                 out_name = f"{os.path.splitext(filename)[0]}_alt_text.xlsx"
                 out_path = os.path.join(OUTPUT_FOLDER, out_name)
@@ -726,9 +793,9 @@ def run_batch_processing(batch_id, files_info):
                 """, (out_name, total_in, total_out, cost, job_id), commit=True, conn=conn)
                 
             except Exception as e:
-                print(f"Job {job_id} failed: {e}")
+                logger.error(f"Job {job_id} failed: {e}")
                 import traceback
-                traceback.print_exc()
+                logger.error(traceback.format_exc())
                 if doc: doc.close()
                 error_msg = str(e)[:500] 
                 query_db("UPDATE jobs SET status = 'failed', error_msg = %s WHERE id = %s", 
@@ -737,13 +804,13 @@ def run_batch_processing(batch_id, files_info):
         query_db("UPDATE batches SET status = 'completed' WHERE id = %s", (batch_id,), commit=True, conn=conn)
         
     except Exception as e:
-        print(f"Batch {batch_id} failed CRITICALLY: {e}")
+        logger.error(f"Batch {batch_id} failed CRITICALLY: {e}")
         import traceback
-        traceback.print_exc()
+        logger.error(traceback.format_exc())
         try:
              query_db("UPDATE batches SET status = 'failed' WHERE id = %s", (batch_id,), commit=True, conn=conn)
         except:
-             print("Could not update batch status to failed")
+             logger.error("Could not update batch status to failed")
     finally:
         if conn: conn.close()
 
@@ -812,8 +879,9 @@ def create_batch_route():
         return jsonify({"error": "No files uploaded"}), 400
         
     files = request.files.getlist("files")
-    # React sends 'document_type', 'use_markers' (string), 'batch_name'
+    # React sends 'document_type', 'use_markers' (string), 'batch_name', 'run_qc'
     batch_name = request.form.get("batch_name") or f"Batch {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    run_qc = request.form.get("run_qc") == "true"
     
     if not files:
         return jsonify({"error": "No files selected"}), 400
@@ -841,7 +909,7 @@ def create_batch_route():
         jobs_to_process.append((job_id, path))
             
     # Start background processing
-    thread = threading.Thread(target=run_batch_processing, args=(batch_id, jobs_to_process))
+    thread = threading.Thread(target=run_batch_processing, args=(batch_id, jobs_to_process, run_qc))
     thread.start()
     
     # Return structure matching CreateBatchResponse interface if needed.

@@ -29,10 +29,12 @@
                 "instructions": [
                     "**A. Description Length & Content:**",
                     "- **Decorative**: Return 'Decorative' or a specific flag.",
-                    "- **Caption Redundancy**: If caption covers it, output 'Refer to caption'.",
+                    "- **Caption Handling**: NEVER use placeholders like 'Refer to caption'. ALWAYS provide a descriptive short alt text that captures the main subject, even if there is a caption.",
                     "- **Missing Captions**: If an image has no caption or figure number, DO NOT SKIP IT. Generate a full description based on visual content.",
                     "- **Instructional**: Provide detailed, structured descriptions.",
                     "**B. Content & Style:**",
+                    "- **Natural Flow**: Write in complete, sensible sentences that read naturally like a human explaining the image to someone. Ensure the text flows well and makes logical sense.",
+                    "- **Context Aware**: Actively read the surrounding text on the page. Use this text to inform your understanding of the image and to make your description more accurate and sensible within the broader context of the page.",
                     "- **Objectivity**: Describe visible elements only. No subjective language.",
                     "- **No Hallucinations**: Do not invent content.",
                     "- **Format**: Present tense, active voice. Spell out abbreviations/symbols.",
@@ -62,9 +64,8 @@
                 "instructions": [
                     "For each image, provide:",
                     "1.  **Page Number**: Relative to fragment.",
-                    "1.  **Page Number**: Relative to fragment.",
                     "2.  **Figure Number**: Label or sequential ID. If no label is present, use 'Unlabeled Image [ID]'. Use suffixes for sub-figures (e.g., 'Figure 1A').",
-                    "3.  **Short Alt Text**: Max 125 chars.",
+                    "3.  **Short Alt Text**: Max 125 chars. Must be a concise, descriptive summary of the image. NEVER use phrases like 'Refer to caption'.",
                     "4.  **Long Alt Text**: Detailed description adhering to domain rules.",
                     "5.  **Context Type**: (e.g., Instructional, Decorative)",
                     "6.  **Domain**: (Inferred: Medical, Education, etc.)"
