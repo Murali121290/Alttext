@@ -29,16 +29,18 @@
                 "instructions": [
                     "**A. Description Length & Content:**",
                     "- **Decorative**: Return 'Decorative' or a specific flag.",
-                    "- **Caption Handling**: NEVER use placeholders like 'Refer to caption'. ALWAYS provide a descriptive short alt text that captures the main subject, even if there is a caption.",
+                    "- **Caption Handling**: NEVER use placeholders like 'Refer to caption'. ALWAYS provide a descriptive short alt text. If a caption is provided, do not repeat that information in the alt text. Focus on what the caption misses.",
                     "- **Missing Captions**: If an image has no caption or figure number, DO NOT SKIP IT. Generate a full description based on visual content.",
                     "- **Instructional**: Provide detailed, structured descriptions.",
                     "**B. Content & Style:**",
+                    "- **US Spelling Only**: Use American English (e.g., 'color' instead of 'colour', 'summarize' instead of 'summarise').",
                     "- **Natural Flow**: Write in complete, sensible sentences that read naturally like a human explaining the image to someone. Ensure the text flows well and makes logical sense.",
                     "- **Context Aware**: Actively read the surrounding text on the page. Use this text to inform your understanding of the image and to make your description more accurate and sensible within the broader context of the page.",
-                    "- **Objectivity**: Describe visible elements only. No subjective language.",
+                    "- **Avoid Interpretations**: Describe only what is visually present. Do not assume the 'mood,' 'intent,' or 'meaning' behind the image. No subjective language.",
+                    "- **No Colors**: Do not mention specific colors in the description (e.g., instead of 'a blue circle,' use positional relationships like 'the top circle'). Focus on the structural relationship of the elements.",
+                    "- **No Symbols**: Do not use symbols like '&', '%', or '#'. Spell them out as 'and,' 'percent,' or 'number.'",
                     "- **No Hallucinations**: Do not invent content.",
-                    "- **Format**: Present tense, active voice. Spell out abbreviations/symbols.",
-                    "- **Colors**: Only if meaningful.",
+                    "- **Format**: Present tense, active voice. Spell out abbreviations.",
                     "**C. Structure by Image Type:**",
                     "- **Graphs**: Summary of trends -> Data table/list.",
                     "- **Diagrams/Flowcharts**: Bulleted lists or process steps.",
@@ -56,11 +58,26 @@
                     "- **Unnecessary Verbs**: Avoid 'shows', 'depicts', 'illustrates', 'represents'. **Fix**: Rewrite to be direct (e.g., 'A cat sits...' instead of 'The image shows a cat sitting...').",
                     "- **Visual-Only Refs**: Avoid 'shown above/below', 'visible here', 'as you can see'. **Fix**: Remove positional cues.",
                     "- **Technical Terms**: Avoid 'screenshot', 'jpeg', 'png', 'thumbnail'. **Fix**: Describe what the image communicates.",
-                    "- **Subjectivity**: Avoid 'beautiful', 'nice', 'amazing', 'funny'. **Fix**: Use objective, observable traits."
+                    "- **Technical Terms**: Avoid 'screenshot', 'jpeg', 'png', 'thumbnail'. **Fix**: Describe what the image communicates.",
+                    "- **Subjectivity**: Avoid 'beautiful', 'nice', 'amazing', 'funny'. **Fix**: Use objective, observable traits.",
+                    "- **Caption Redundancy**: Avoid repeating names/titles in captions or restating the caption verbatim. Do not include copyright info.",
+                    "- **Literal Aesthetic Detail**: Avoid describing clothing, jewelry, blurred backgrounds, or icon geometry in detail unless instructionally relevant.",
+                    "- **Unverified Medical Diagnostics**: Remove all medical diagnoses, clinical terminology, and inferred health conditions unless explicitly written in the image. Remove interpretive language (e.g., 'demonstrates symptoms', 'indicates disease'). Describe only what is visually observable."
                 ]
             },
             {
-                "title": "5. OUTPUT REQUIREMENTS",
+                "title": "5. CRITICAL BUG AVOIDANCE & WCAG 2.1 COMPLIANCE",
+                "instructions": [
+                    "**DECORATIVE OVERLOAD**: Do NOT focus on leaf textures, banners, borders, icons, background colors, or layout styling (top, bottom, left margin). If decorative elements dominate, rewrite to focus on the instructional point.",
+                    "**INSTRUCTIONAL TEXT**: Do NOT omit embedded text like chapter outlines, learning objectives, step lists, model labels, or question prompts. Partial transcription is a failure.",
+                    "**MULTI-PART CONTENT**: Do NOT describe only one part of multi-part content. Define all glossary terms, list all items, and cover all labeled elements across subfigures.",
+                    "**FUNCTIONAL RELATIONSHIPS**: For models/diagrams, do NOT ignore the direction of arrows, feedback loops, or added elements. Use verbs like 'connects', 'illustrates', 'compares', and 'demonstrates'. Alt text must explain how components interact.",
+                    "**MISCLASSIFICATION**: NEVER mark an image as decorative if it contains definitions, learning objectives, models, comparison examples, or supports a case study.",
+                    "**PEDAGOGICAL FRAMING**: State why the image exists in the lesson and what concept it illustrates."
+                ]
+            },
+            {
+                "title": "6. OUTPUT REQUIREMENTS",
                 "instructions": [
                     "For each image, provide:",
                     "1.  **Page Number**: Relative to fragment.",

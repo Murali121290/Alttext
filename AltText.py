@@ -192,6 +192,11 @@ def init_db():
         cur = conn.cursor()
         for ddl in tables:
             cur.execute(ddl)
+
+        # Reset any jobs/batches that were left 'processing' due to a crash or corruption
+        cur.execute("UPDATE jobs SET status = 'failed', error_msg = 'System crashed or corrupt file prevented completion.' WHERE status = 'processing'")
+        cur.execute("UPDATE batches SET status = 'failed' WHERE status = 'processing'")
+        
         conn.commit()
         
         # Create Admin
@@ -471,6 +476,27 @@ def admin_stats():
 
 # ---------------- CORE LOGIC ----------------
 
+def apply_json_rules_to_alt_text(text):
+    if not text:
+        return text
+    try:
+        rules_path = os.path.join(os.path.dirname(__file__), 'utils', 'alt_text_rules.json')
+        if os.path.exists(rules_path):
+            with open(rules_path, 'r', encoding='utf-8') as f:
+                rules_data = json.load(f)
+            
+            import re
+            for rule_name, rule_data in rules_data.get("alt_text_validation_rules", {}).items():
+                action = rule_data.get("auto_fix_action")
+                if action in ["REMOVE_PHRASE", "REMOVE_WORD"]:
+                    for phrase in rule_data.get("words", []):
+                        pattern = r'(?i)\b' + re.escape(phrase) + r'\b\s*'
+                        text = re.sub(pattern, '', text).strip()
+    except Exception as e:
+        logger.error(f"Error applying alt text rules programmatically: {e}")
+         
+    return text
+
 def clean_alt_text(text):
     """
     Cleans alt text by removing indefinite articles and redundant phrases 
@@ -606,7 +632,11 @@ def process_single_image(img_data, absolute_page_num, run_qc=False):
                         continue
                         
                     try:
-                        qc_prompt_text = QC_VALIDATION_PROMPT.replace("{alt_text}", item.get("long_alt"))
+                        qc_prompt_text = QC_VALIDATION_PROMPT.format(
+                            domain=item.get("domain", "General"),
+                            context_type=item.get("context_type", "General"),
+                            alt_text=item.get("long_alt")
+                        )
                         # Re-using the same image and client
                         qc_response = client.models.generate_content(
                             model=MODEL_NAME,
@@ -628,13 +658,28 @@ def process_single_image(img_data, absolute_page_num, run_qc=False):
                         if start_idx != -1 and last_idx != -1 and last_idx >= start_idx:
                             qc_json_str = qc_json_str[start_idx:last_idx+1]
                             
-                        qc_data = json.loads(qc_json_str)
+                        # Try to handle common LLM output mistakes (trailing commas, unclosed strings)
+                        try:
+                            qc_data = json.loads(qc_json_str)
+                        except json.JSONDecodeError as jde:
+                            logger.warning(f"QC JSON Decode Error on page {absolute_page_num}: {jde}. Attempting basic cleanup...")
+                            # Basic cleanup for common Gemini truncation/formatting issues
+                            clean_str = qc_json_str.replace("'", '"')
+                            # Remove trailing commas before closing braces
+                            clean_str = re.sub(r',\s*\}', '}', clean_str)
+                            try:
+                                qc_data = json.loads(clean_str)
+                            except json.JSONDecodeError:
+                                logger.error(f"Secondary QC JSON Decode Error on page {absolute_page_num}. Extracted string: {clean_str[:150]}")
+                                raise Exception(f"Failed to parse QC JSON: {qc_json_str[:50]}...")
+                            
                         qc_item["qc_completeness"] = qc_data.get("completeness_score", "")
                         qc_item["qc_accuracy"] = qc_data.get("scientific_accuracy_score", "")
                         qc_item["qc_pedagogy"] = qc_data.get("pedagogical_adequacy_score", "")
                         qc_item["qc_decision"] = qc_data.get("final_decision", "")
                         qc_item["qc_justification"] = qc_data.get("justification", "")
-                        qc_item["qc_revised_alt"] = qc_data.get("revised_alt_text", "")
+                        raw_revised = qc_data.get("revised_alt_text", "")
+                        qc_item["qc_revised_alt"] = apply_json_rules_to_alt_text(raw_revised)
                         
                     except Exception as e:
                         logger.error(f"QC Validation failed for item on page {absolute_page_num}: {e}")
