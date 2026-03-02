@@ -7,3 +7,4 @@ venv/
 outputs/
 uploads/
 .DS_Store
+*.log
