@@ -12,20 +12,27 @@ from PIL import Image
 from flask import Flask, request, send_file, jsonify, render_template, g, redirect as flask_redirect, flash, url_for
 from openpyxl import Workbook
 import google.genai as genai
+import json
+import worker_tasks
 from utils.prompt_assets import SYSTEM_PROMPT
 from utils.qc_prompt import QC_VALIDATION_PROMPT
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from functools import wraps
 import logging
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from utils.security import PasswordValidator, FileValidator, sanitize_filename, check_default_credentials
 
 # ---------------- LOGGING CONFIG ----------------
+_stream_handler = logging.StreamHandler()
+_stream_handler.stream = open(_stream_handler.stream.fileno(), mode='w', encoding='utf-8', buffering=1)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("alttext_processing.log"),
-        logging.StreamHandler()
+        logging.FileHandler("alttext_processing.log", encoding='utf-8'),
+        _stream_handler
     ]
 )
 logger = logging.getLogger(__name__)
@@ -38,7 +45,7 @@ import re
 load_dotenv()
 # genai.configure is no longer needed in new SDK, using Client instead.
 # Using a valid model from the available list or user preference
-MODEL_NAME = "gemini-3-flash-preview" 
+MODEL_NAME = "gemini-3-pro-preview" 
 
 UPLOAD_FOLDER = "uploads"
 OUTPUT_FOLDER = "outputs"
@@ -183,6 +190,8 @@ def init_db():
             username TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
             role TEXT DEFAULT 'user',
+            must_change_password BOOLEAN DEFAULT FALSE,
+            last_password_change TIMESTAMP,
             created_at TIMESTAMP {ts_default}
         )'''
     ]
@@ -193,10 +202,48 @@ def init_db():
         for ddl in tables:
             cur.execute(ddl)
 
+        # Add new columns if they don't exist (for existing databases)
+        try:
+            if IS_SQLITE:
+                # SQLite doesn't support IF NOT EXISTS in ALTER TABLE, so check first
+                cur.execute("PRAGMA table_info(users)")
+                columns = [row[1] for row in cur.fetchall()]
+                if 'must_change_password' not in columns:
+                    cur.execute("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT FALSE")
+                if 'last_password_change' not in columns:
+                    cur.execute("ALTER TABLE users ADD COLUMN last_password_change TIMESTAMP")
+            else:
+                # PostgreSQL supports IF NOT EXISTS
+                cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT FALSE")
+                cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_password_change TIMESTAMP")
+            conn.commit()
+        except Exception as e:
+            logger.warning(f"Column migration warning (may be normal if columns exist): {e}")
+            conn.rollback()
+
+        # Create indexes for better query performance
+        indexes = [
+            "CREATE INDEX IF NOT EXISTS idx_jobs_batch_id ON jobs(batch_id)",
+            "CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)",
+            "CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_batches_created_at ON batches(created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_batches_status ON batches(status)",
+            "CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)",
+            "CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)"
+        ]
+
+        for index_sql in indexes:
+            try:
+                cur.execute(index_sql)
+            except Exception as e:
+                logger.warning(f"Index creation warning (may already exist): {e}")
+
+        conn.commit()
+
         # Reset any jobs/batches that were left 'processing' due to a crash or corruption
         cur.execute("UPDATE jobs SET status = 'failed', error_msg = 'System crashed or corrupt file prevented completion.' WHERE status = 'processing'")
         cur.execute("UPDATE batches SET status = 'failed' WHERE status = 'processing'")
-        
+
         conn.commit()
         
         # Create Admin
@@ -210,13 +257,22 @@ def init_db():
         if not cur.fetchone():
             try:
                 enc_pw = generate_password_hash("admin123")
-                cur.execute(f"INSERT INTO users (username, password, role) VALUES ({placeholder}, {placeholder}, {placeholder})", 
-                              ('admin', enc_pw, 'admin'))
+                cur.execute(f"INSERT INTO users (username, password, role, must_change_password) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder})",
+                              ('admin', enc_pw, 'admin', True))
                 conn.commit()
+                logger.warning("Default admin account created with password 'admin123' - MUST BE CHANGED ON FIRST LOGIN")
             except (sqlite3.IntegrityError, psycopg2.errors.UniqueViolation, psycopg2.IntegrityError):
                 # Another worker likely created the user already
                 conn.rollback()
                 pass
+        else:
+            # Mark existing admin with default password to require change
+            cur.execute(f"SELECT * FROM users WHERE username = {placeholder}", ('admin',))
+            admin = cur.fetchone()
+            if admin and check_password_hash(admin['password'], 'admin123'):
+                cur.execute(f"UPDATE users SET must_change_password = {placeholder} WHERE username = {placeholder}", (True, 'admin'))
+                conn.commit()
+                logger.warning("Default admin password detected - password change will be required on next login")
         print(f"Database initialized using {'SQLite' if IS_SQLITE else 'PostgreSQL'}")
     except Exception as e:
         print(f"DB Init Error: {e}")
@@ -230,22 +286,38 @@ init_db()
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev_secret_key_change_in_prod") # vital for session
 
+# ---------------- RATE LIMITING CONFIG ----------------
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://",  # Use Redis in production: redis://localhost:6379
+    strategy="fixed-window"
+)
+
 # ---------------- AUTH CONFIG ----------------
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login_page'
 
 class User(UserMixin):
-    def __init__(self, id, username, role):
+    def __init__(self, id, username, role, must_change_password=False):
         self.id = id
         self.username = username
         self.role = role
+        self.must_change_password = must_change_password
 
 @login_manager.user_loader
 def load_user(user_id):
     u = query_db("SELECT * FROM users WHERE id = %s", (user_id,), one=True)
     if u:
-        return User(id=u['id'], username=u['username'], role=u['role'])
+        must_change = dict(u).get('must_change_password', False)
+        # Convert from various possible boolean representations
+        if isinstance(must_change, (int, bool)):
+            must_change = bool(must_change)
+        elif isinstance(must_change, str):
+            must_change = must_change.lower() in ('true', '1', 't', 'yes')
+        return User(id=u['id'], username=u['username'], role=u['role'], must_change_password=must_change)
     return None
 
 def admin_required(f):
@@ -266,24 +338,45 @@ def close_connection(exception):
 # ---------------- AUTH ROUTES ----------------
 
 @app.route("/login", methods=["GET", "POST"])
+@limiter.limit("10 per minute")
 def login_page():
     if current_user.is_authenticated:
+        # Check if user must change password
+        if current_user.must_change_password:
+            return flask_redirect("/change-password")
         return flask_redirect("/")
-        
+
     if request.method == "POST":
         username = request.form.get("username")
         password = request.form.get("password")
-        
+
+        # Warn about default credentials
+        if check_default_credentials(username, password):
+            logger.warning(f"Default credentials used for login attempt: {username}")
+
         user = query_db("SELECT * FROM users WHERE username = %s", (username,), one=True)
-        
+
         # Check password
         if user and check_password_hash(user['password'], password):
-            user_obj = User(id=user['id'], username=user['username'], role=user['role'])
+            must_change = dict(user).get('must_change_password', False)
+            if isinstance(must_change, (int, bool)):
+                must_change = bool(must_change)
+            elif isinstance(must_change, str):
+                must_change = must_change.lower() in ('true', '1', 't', 'yes')
+
+            user_obj = User(id=user['id'], username=user['username'], role=user['role'], must_change_password=must_change)
             login_user(user_obj)
+
+            # Redirect to password change if required
+            if must_change:
+                flash("You must change your password before continuing.", "warning")
+                return flask_redirect("/change-password")
+
             return flask_redirect(request.args.get("next") or "/")
         else:
+            logger.warning(f"Failed login attempt for user: {username}")
             return render_template("login.html", error="Invalid credentials")
-            
+
     return render_template("login.html")
 
 @app.route("/logout")
@@ -292,7 +385,51 @@ def logout():
     logout_user()
     return flask_redirect("/login")
 
+@app.route("/change-password", methods=["GET", "POST"])
+@login_required
+def change_password():
+    if request.method == "POST":
+        current_password = request.form.get("current_password")
+        new_password = request.form.get("new_password")
+        confirm_password = request.form.get("confirm_password")
+
+        # Verify current password
+        user = query_db("SELECT * FROM users WHERE id = %s", (current_user.id,), one=True)
+        if not user or not check_password_hash(user['password'], current_password):
+            return render_template("change_password.html", error="Current password is incorrect", must_change=current_user.must_change_password)
+
+        # Validate new password
+        if new_password != confirm_password:
+            return render_template("change_password.html", error="New passwords do not match", must_change=current_user.must_change_password)
+
+        # Check password complexity
+        is_valid, error_msg = PasswordValidator.validate(new_password)
+        if not is_valid:
+            return render_template("change_password.html", error=error_msg, must_change=current_user.must_change_password)
+
+        # Don't allow same password
+        if current_password == new_password:
+            return render_template("change_password.html", error="New password must be different from current password", must_change=current_user.must_change_password)
+
+        # Update password
+        hashed = generate_password_hash(new_password)
+        query_db("""
+            UPDATE users
+            SET password = %s, must_change_password = %s, last_password_change = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (hashed, False, current_user.id), commit=True)
+
+        # Update current user session
+        current_user.must_change_password = False
+
+        flash("Password changed successfully.", "success")
+        logger.info(f"User {current_user.username} changed their password")
+        return flask_redirect("/")
+
+    return render_template("change_password.html", must_change=current_user.must_change_password)
+
 @app.route("/register", methods=["GET", "POST"])
+@limiter.limit("5 per hour")
 def register_page():
     # Public registration
     if current_user.is_authenticated:
@@ -302,24 +439,34 @@ def register_page():
         username = request.form.get("username")
         password = request.form.get("password")
         confirm_password = request.form.get("confirm_password")
-        
+
+        # Validate username
+        if not username or len(username) < 3:
+            return render_template("register.html", error="Username must be at least 3 characters long")
+
         if password != confirm_password:
             return render_template("register.html", error="Passwords do not match")
-            
+
+        # Validate password complexity
+        is_valid, error_msg = PasswordValidator.validate(password)
+        if not is_valid:
+            return render_template("register.html", error=error_msg)
+
         try:
             # Check if user exists
             if query_db("SELECT id FROM users WHERE username = %s", (username,), one=True):
                  return render_template("register.html", error="Username already exists")
-                 
+
             hashed = generate_password_hash(password)
-            query_db("INSERT INTO users (username, password, role) VALUES (%s, %s, %s)", 
-                    (username, hashed, 'user'), commit=True)
-            
+            query_db("INSERT INTO users (username, password, role, must_change_password, last_password_change) VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)",
+                    (username, hashed, 'user', False), commit=True)
+
             # Login immediately
             user = query_db("SELECT * FROM users WHERE username = %s", (username,), one=True)
-            user_obj = User(id=user['id'], username=user['username'], role=user['role'])
+            user_obj = User(id=user['id'], username=user['username'], role=user['role'], must_change_password=False)
             login_user(user_obj)
-            
+
+            logger.info(f"New user registered: {username}")
             return flask_redirect("/")
         except Exception as e:
             return render_template("register.html", error=f"Registration failed: {e}")
@@ -476,390 +623,6 @@ def admin_stats():
 
 # ---------------- CORE LOGIC ----------------
 
-def apply_json_rules_to_alt_text(text):
-    if not text:
-        return text
-    try:
-        rules_path = os.path.join(os.path.dirname(__file__), 'utils', 'alt_text_rules.json')
-        if os.path.exists(rules_path):
-            with open(rules_path, 'r', encoding='utf-8') as f:
-                rules_data = json.load(f)
-            
-            import re
-            for rule_name, rule_data in rules_data.get("alt_text_validation_rules", {}).items():
-                action = rule_data.get("auto_fix_action")
-                if action in ["REMOVE_PHRASE", "REMOVE_WORD"]:
-                    for phrase in rule_data.get("words", []):
-                        pattern = r'(?i)\b' + re.escape(phrase) + r'\b\s*'
-                        text = re.sub(pattern, '', text).strip()
-    except Exception as e:
-        logger.error(f"Error applying alt text rules programmatically: {e}")
-         
-    return text
-
-def clean_alt_text(text):
-    """
-    Cleans alt text by removing indefinite articles and redundant phrases 
-    from the beginning of the text.
-    """
-    if not text:
-        return ""
-    
-    text = text.strip()
-    
-    # Remove common prefixes like "a ", "an ", "the "
-    lower_text = text.lower()
-    if lower_text.startswith("a "):
-        text = text[2:].strip()
-    elif lower_text.startswith("an "):
-        text = text[3:].strip()
-    elif lower_text.startswith("the "):
-        text = text[4:].strip()
-        
-    # Remove "Figure X: " prefix variants
-    import re
-    text = re.sub(r'^(Figure|Fig\.?)\s*\d+[:.]\s*', '', text, flags=re.IGNORECASE)
-    
-    return text
-
-def process_single_image(img_data, absolute_page_num, run_qc=False):
-    """
-    Process a single rendered PDF page image.
-    Returns: (list of dicts, input_tokens, output_tokens)
-    """
-    logger.info(f"  Processing Page {absolute_page_num}... (QC: {run_qc})")
-    
-    items = []
-    total_in = 0
-    total_out = 0
-    
-    # --- GEMINI CALL ---
-    MAX_RETRIES = 5
-    for attempt in range(MAX_RETRIES):
-        try:
-            image = Image.open(io.BytesIO(img_data))
-            
-            # Convert to RGB if needed
-            if image.mode != "RGB":
-                image = image.convert("RGB")
-                
-            # Resize if absolutely massive (rare for pages but good safety)
-            if image.width > 3072 or image.height > 3072:
-                image.thumbnail((3072, 3072))
-            
-            # Use the Centralized System Prompt
-            prompt = SYSTEM_PROMPT
-            
-            if not GEMINI_API_KEY:
-                raise ValueError("GEMINI_API_KEY not set")
-
-            client = genai.Client(api_key=GEMINI_API_KEY)
-            
-            # Add explicit instruction for current page number context
-            context_prompt = f"This is Page {absolute_page_num} of the document.\n\n" + prompt
-            
-            response = client.models.generate_content(
-                model=MODEL_NAME,
-                contents=[context_prompt, image]
-            )
-            
-            # Parse usage
-            if response.usage_metadata:
-                total_in += (response.usage_metadata.prompt_token_count or 0)
-                total_out += (response.usage_metadata.candidates_token_count or 0)
-            
-            # Parse JSON
-            text_resp = response.text.strip()
-
-            # Robust JSON extraction to handle conversational text
-            import re
-            json_str = text_resp
-            
-            # 1. Try to find markdown code block
-            code_block = re.search(r'```(?:json)?\s*(.*?)```', text_resp, re.DOTALL)
-            if code_block:
-                json_str = code_block.group(1).strip()
-            else:
-                # 2. Heuristic: find first '[' or '{' and last ']' or '}'
-                # This handles text like "Here is the JSON: [...]"
-                start_idx_list = text_resp.find('[')
-                start_idx_obj = text_resp.find('{')
-                
-                start_idx = -1
-                end_chars = ''
-                
-                if start_idx_list != -1 and (start_idx_obj == -1 or start_idx_list < start_idx_obj):
-                     start_idx = start_idx_list
-                     end_chars = ']'
-                elif start_idx_obj != -1:
-                     start_idx = start_idx_obj
-                     end_chars = '}'
-                     
-                if start_idx != -1:
-                    last_idx = text_resp.rfind(end_chars)
-                    if last_idx != -1 and last_idx > start_idx:
-                        json_str = text_resp[start_idx:last_idx+1]
-
-            # Handle potential empty response or non-list
-            try:
-                data = json.loads(json_str)
-            except json.JSONDecodeError:
-                logger.error(f"JSON Decode Error on page {absolute_page_num}. Extracted: {json_str[:100]}... Raw: {text_resp[:100]}...")
-                # Attempt to fix common issues or just return empty
-                data = []
-
-            if isinstance(data, dict):
-                data = [data] # Handle single object return edge case
-            
-            for item in data:
-                # Ensure fields exist
-                items.append({
-                    "page": absolute_page_num, # Force correct page number
-                    "figure_number": item.get("figure_number", "Unknown"),
-                    "short_alt": item.get("short_alt", ""),
-                    "long_alt": item.get("long_alt", ""),
-                    "context_type": item.get("context_type", ""),
-                    "domain": item.get("domain", "")
-                })
-
-            if run_qc:
-                logger.info(f"    Running QC for {len(items)} items on page {absolute_page_num}")
-                validated_items = []
-                for item in items:
-                    qc_item = dict(item)
-                    if not item.get("long_alt"):
-                        validated_items.append(qc_item)
-                        continue
-                        
-                    try:
-                        qc_prompt_text = QC_VALIDATION_PROMPT.format(
-                            domain=item.get("domain", "General"),
-                            context_type=item.get("context_type", "General"),
-                            alt_text=item.get("long_alt")
-                        )
-                        # Re-using the same image and client
-                        qc_response = client.models.generate_content(
-                            model=MODEL_NAME,
-                            contents=[qc_prompt_text, image]
-                        )
-                        
-                        if qc_response.usage_metadata:
-                            total_in += (qc_response.usage_metadata.prompt_token_count or 0)
-                            total_out += (qc_response.usage_metadata.candidates_token_count or 0)
-                            
-                        qc_text = qc_response.text.strip()
-                        
-                        # Extract JSON
-                        code_block = re.search(r'```(?:json)?\s*(.*?)```', qc_text, re.DOTALL)
-                        qc_json_str = code_block.group(1).strip() if code_block else qc_text
-                        
-                        start_idx = qc_json_str.find('{')
-                        last_idx = qc_json_str.rfind('}')
-                        if start_idx != -1 and last_idx != -1 and last_idx >= start_idx:
-                            qc_json_str = qc_json_str[start_idx:last_idx+1]
-                            
-                        # Try to handle common LLM output mistakes (trailing commas, unclosed strings)
-                        try:
-                            qc_data = json.loads(qc_json_str)
-                        except json.JSONDecodeError as jde:
-                            logger.warning(f"QC JSON Decode Error on page {absolute_page_num}: {jde}. Attempting basic cleanup...")
-                            # Basic cleanup for common Gemini truncation/formatting issues
-                            clean_str = qc_json_str.replace("'", '"')
-                            # Remove trailing commas before closing braces
-                            clean_str = re.sub(r',\s*\}', '}', clean_str)
-                            try:
-                                qc_data = json.loads(clean_str)
-                            except json.JSONDecodeError:
-                                logger.error(f"Secondary QC JSON Decode Error on page {absolute_page_num}. Extracted string: {clean_str[:150]}")
-                                raise Exception(f"Failed to parse QC JSON: {qc_json_str[:50]}...")
-                            
-                        qc_item["qc_completeness"] = qc_data.get("completeness_score", "")
-                        qc_item["qc_accuracy"] = qc_data.get("scientific_accuracy_score", "")
-                        qc_item["qc_pedagogy"] = qc_data.get("pedagogical_adequacy_score", "")
-                        qc_item["qc_decision"] = qc_data.get("final_decision", "")
-                        qc_item["qc_justification"] = qc_data.get("justification", "")
-                        raw_revised = qc_data.get("revised_alt_text", "")
-                        qc_item["qc_revised_alt"] = apply_json_rules_to_alt_text(raw_revised)
-                        
-                    except Exception as e:
-                        logger.error(f"QC Validation failed for item on page {absolute_page_num}: {e}")
-                        qc_item["qc_completeness"] = "Error"
-                        qc_item["qc_accuracy"] = "Error"
-                        qc_item["qc_pedagogy"] = "Error"
-                        qc_item["qc_decision"] = "Error"
-                        qc_item["qc_justification"] = str(e)
-                        qc_item["qc_revised_alt"] = ""
-                        
-                    validated_items.append(qc_item)
-                items = validated_items
-
-            logger.info(f"    Found {len(items)} items on page {absolute_page_num}")
-            break # Success, exit retry loop
-            
-        except Exception as e:
-            error_msg = str(e)
-            if "429" in error_msg or "502" in error_msg or "500" in error_msg or "503" in error_msg or "quota" in error_msg.lower():
-                logger.warning(f"Gemini API rate limit/server error on page {absolute_page_num} (Attempt {attempt+1}/{MAX_RETRIES}): {e}")
-                if attempt < MAX_RETRIES - 1:
-                    sleep_time = (attempt + 1) * 3 # Exponential/Linear backoff: 3s, 6s, 9s, 12s
-                    logger.info(f"Waiting {sleep_time} seconds before retrying page {absolute_page_num}...")
-                    time.sleep(sleep_time)
-                    continue
-            
-            # If not a retryable error or max retries reached:
-            logger.error(f"Gemini Error on page {absolute_page_num} after {attempt + 1} attempts: {e}")
-            items.append({
-                "page": absolute_page_num,
-                "figure_number": "Error",
-                "short_alt": "Error processing page",
-                "long_alt": str(e),
-                "context_type": "Error",
-                "domain": "Error"
-            })
-            break # Exit retry loop on fatal error
-
-    return items, total_in, total_out
-
-def calculate_cost(input_tokens, output_tokens):
-    # Gemini 1.5 Flash Pricing (approx)
-    # Input: $0.35 / 1M tokens
-    # Output: $1.05 / 1M tokens
-    cost_in = (input_tokens / 1_000_000) * 0.35
-    cost_out = (output_tokens / 1_000_000) * 1.05
-    return cost_in + cost_out
-
-def run_batch_processing(batch_id, files_info, run_qc=False):
-    """
-    files_info: list of (filename, file_path)
-    Runs in a background thread.
-    """
-    logger.info(f"Starting batch {batch_id} with {len(files_info)} files (QC: {run_qc}). DB Type: {DB_TYPE}, SQLite: {IS_SQLITE}")
-    
-    # Establish new DB connection for this thread
-    conn = get_db_connection()
-    
-    try:
-        query_db("UPDATE batches SET status = 'processing' WHERE id = %s", (batch_id,), commit=True, conn=conn)
-        
-        for job_id, filepath in files_info:
-            logger.info(f"Processing job {job_id}: {filepath}")
-            
-            query_db("UPDATE jobs SET status = 'processing' WHERE id = %s", (job_id,), commit=True, conn=conn)
-            
-            doc = None
-            try:
-                # 1. Provide Pages and Process PDF
-                if not os.path.exists(filepath):
-                    raise FileNotFoundError(f"File not found: {filepath}")
-                    
-                doc = fitz.open(filepath)
-                
-                # Render all pages to memory first
-                pages_data = []
-                for page_index, page in enumerate(doc):
-                    absolute_page_num = page_index + 1
-                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-                    img_data = pix.tobytes("png")
-                    pages_data.append((img_data, absolute_page_num))
-                
-                # Close main doc after rendering all pages to memory to free file lock
-                doc.close()
-                doc = None 
-                
-                all_items = []
-                total_in = 0
-                total_out = 0
-                
-                # Parallel processing of individual pages
-                from concurrent.futures import as_completed, ThreadPoolExecutor
-                with ThreadPoolExecutor(max_workers=5) as executor:
-                    future_to_page = {
-                        executor.submit(process_single_image, img_data, absolute_page_num, run_qc): absolute_page_num 
-                        for img_data, absolute_page_num in pages_data
-                    }
-                    
-                    for future in as_completed(future_to_page):
-                        absolute_page_num = future_to_page[future]
-                        try:
-                            items, i_tok, o_tok = future.result()
-                            all_items.extend(items)
-                            total_in += i_tok
-                            total_out += o_tok
-                        except Exception as e:
-                            logger.error(f"Page processing failed for page {absolute_page_num}: {e}")
-
-                # 2. Generate Excel
-                wb = Workbook()
-                ws = wb.active
-                ws.title = "Alt Text"
-                headers = ["File name", "Figure number", "Page number", "Short alt text", "Long alt text", "Context Type", "Domain"]
-                if run_qc:
-                    headers.extend(["QC Completeness", "QC Accuracy", "QC Pedagogy", "QC Decision", "QC Justification", "Revised Alt Text"])
-                ws.append(headers)
-                
-                all_items.sort(key=lambda x: x.get("page", 0))
-                
-                filename = os.path.basename(filepath)
-                for item in all_items:
-                    row = [
-                        filename,
-                        item.get("figure_number", "unknown"),
-                        item.get("page", "unknown"),
-                        clean_alt_text(item.get("short_alt", "")),
-                        clean_alt_text(item.get("long_alt", "")),
-                        item.get("context_type", "General"),
-                        item.get("domain", "General")
-                    ]
-                    if run_qc:
-                        row.extend([
-                            item.get("qc_completeness", ""),
-                            item.get("qc_accuracy", ""),
-                            item.get("qc_pedagogy", ""),
-                            item.get("qc_decision", ""),
-                            item.get("qc_justification", ""),
-                            clean_alt_text(item.get("qc_revised_alt", ""))
-                        ])
-                    ws.append(row)
-                
-                out_name = f"{os.path.splitext(filename)[0]}_alt_text.xlsx"
-                out_path = os.path.join(OUTPUT_FOLDER, out_name)
-                wb.save(out_path)
-                
-                cost = calculate_cost(total_in, total_out)
-                
-                query_db("""
-                    UPDATE jobs 
-                    SET status = 'completed', 
-                        output_file = %s, 
-                        input_tokens = %s, 
-                        output_tokens = %s, 
-                        cost = %s 
-                    WHERE id = %s
-                """, (out_name, total_in, total_out, cost, job_id), commit=True, conn=conn)
-                
-            except Exception as e:
-                logger.error(f"Job {job_id} failed: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
-                if doc: doc.close()
-                error_msg = str(e)[:500] 
-                query_db("UPDATE jobs SET status = 'failed', error_msg = %s WHERE id = %s", 
-                        (error_msg, job_id), commit=True, conn=conn)
-
-        query_db("UPDATE batches SET status = 'completed' WHERE id = %s", (batch_id,), commit=True, conn=conn)
-        
-    except Exception as e:
-        logger.error(f"Batch {batch_id} failed CRITICALLY: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        try:
-             query_db("UPDATE batches SET status = 'failed' WHERE id = %s", (batch_id,), commit=True, conn=conn)
-        except:
-             logger.error("Could not update batch status to failed")
-    finally:
-        if conn: conn.close()
-
-
 # ---------------- ROUTES ----------------
 
 @app.route("/", methods=["GET"])
@@ -885,9 +648,24 @@ def batch_details_page(batch_id):
 @app.route("/download/<path:filename>")
 @login_required
 def download_file(filename):
-    # Security check: ensure filename doesn't contain .. or strictly limit to output folder
-    safe_path = os.path.basename(filename)
-    return send_file(os.path.join(OUTPUT_FOLDER, safe_path), as_attachment=True)
+    # Security check: sanitize filename and ensure it's in output folder
+    safe_filename = sanitize_filename(filename)
+    file_path = os.path.join(OUTPUT_FOLDER, safe_filename)
+
+    # Verify the file exists and is within OUTPUT_FOLDER
+    if not os.path.exists(file_path):
+        flash("File not found", "error")
+        return flask_redirect("/files")
+
+    # Prevent directory traversal
+    real_path = os.path.realpath(file_path)
+    real_output = os.path.realpath(OUTPUT_FOLDER)
+    if not real_path.startswith(real_output):
+        logger.warning(f"Attempted directory traversal by {current_user.username}: {filename}")
+        flash("Access denied", "error")
+        return flask_redirect("/files")
+
+    return send_file(real_path, as_attachment=True)
 
 @app.route('/favicon.ico')
 def favicon():
@@ -919,43 +697,89 @@ def files_page():
     return render_template('download.html', active_page='files', files=files_data)
 
 @app.route("/api/queue/batch", methods=["POST"])
+@limiter.limit("20 per hour")
+@login_required
 def create_batch_route():
     if "files" not in request.files:
         return jsonify({"error": "No files uploaded"}), 400
-        
+
     files = request.files.getlist("files")
-    # React sends 'document_type', 'use_markers' (string), 'batch_name', 'run_qc'
     batch_name = request.form.get("batch_name") or f"Batch {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
     run_qc = request.form.get("run_qc") == "true"
-    
+
     if not files:
         return jsonify({"error": "No files selected"}), 400
 
-    # Filter for valid files
+    # Validate batch size and count
+    is_valid, error_msg = FileValidator.validate_batch(files)
+    if not is_valid:
+        return jsonify({"error": error_msg}), 400
+
+    # Filter and validate files
     valid_files = []
+    validation_errors = []
+
     for f in files:
-        if f.filename and (f.filename.lower().endswith('.pdf') or f.filename.lower().endswith('.docx')):
-            valid_files.append(f)
-            
+        if not f.filename:
+            continue
+
+        # Check extension
+        filename_lower = f.filename.lower()
+        if not (filename_lower.endswith('.pdf') or filename_lower.endswith('.docx')):
+            validation_errors.append(f"{f.filename}: Invalid file type")
+            continue
+
+        # Sanitize filename
+        safe_filename = sanitize_filename(f.filename)
+
+        # Save temporarily for validation
+        temp_path = os.path.join(UPLOAD_FOLDER, f"temp_{safe_filename}")
+        f.save(temp_path)
+
+        # Deep file validation
+        is_valid_file, file_error = FileValidator.validate_file(temp_path, f.filename)
+        if not is_valid_file:
+            os.remove(temp_path)
+            validation_errors.append(f"{f.filename}: {file_error}")
+            continue
+
+        # Rename to final name
+        final_path = os.path.join(UPLOAD_FOLDER, safe_filename)
+        # Handle name collisions
+        counter = 1
+        while os.path.exists(final_path):
+            name, ext = os.path.splitext(safe_filename)
+            final_path = os.path.join(UPLOAD_FOLDER, f"{name}_{counter}{ext}")
+            counter += 1
+
+        os.rename(temp_path, final_path)
+        valid_files.append((safe_filename, final_path))
+
     if not valid_files:
-         return jsonify({"error": "No valid PDF or DOCX files found"}), 400
+        error_summary = "; ".join(validation_errors) if validation_errors else "No valid PDF or DOCX files found"
+        return jsonify({"error": error_summary}), 400
+
+    if validation_errors:
+        logger.warning(f"File validation errors: {validation_errors}")
 
     # Insert Batch
-    batch_id = query_db("INSERT INTO batches (name, status) VALUES (%s, %s) RETURNING id", 
+    batch_id = query_db("INSERT INTO batches (name, status) VALUES (%s, %s) RETURNING id",
                        (batch_name, 'pending'), commit=True, return_id=True)
     jobs_to_process = []
-    
-    for file in valid_files:
-        path = os.path.join(UPLOAD_FOLDER, file.filename)
-        file.save(path)
-        
-        job_id = query_db("INSERT INTO jobs (batch_id, filename, status) VALUES (%s, %s, %s) RETURNING id", 
-                         (batch_id, file.filename, 'pending'), commit=True, return_id=True)
-        jobs_to_process.append((job_id, path))
+
+    for filename, filepath in valid_files:
+        job_id = query_db("INSERT INTO jobs (batch_id, filename, status) VALUES (%s, %s, %s) RETURNING id",
+                         (batch_id, filename, 'pending'), commit=True, return_id=True)
+        jobs_to_process.append((job_id, filepath))
             
-    # Start background processing
-    thread = threading.Thread(target=run_batch_processing, args=(batch_id, jobs_to_process, run_qc))
+    # Delegate background processing to a local thread (Reverting to original architecture)
+    thread = threading.Thread(
+        target=worker_tasks.run_batch_processing,
+        args=(batch_id, jobs_to_process, run_qc)
+    )
+    thread.daemon = True
     thread.start()
+    logger.info(f"Started background thread for Batch {batch_id}")
     
     # Return structure matching CreateBatchResponse interface if needed.
     # The frontend expects { batch: { batch_id: ... } } or similar?
@@ -974,6 +798,7 @@ def create_batch_route():
 
 @app.route("/api/queue/batches", methods=["GET"]) 
 @app.route("/api/batches", methods=["GET"])
+@limiter.exempt
 @login_required
 def list_batches_route():
     try:
@@ -1040,6 +865,7 @@ def get_batch_details(batch_id):
     })
 
 @app.route("/api/queue/status", methods=["GET"])
+@limiter.exempt
 @login_required
 def get_queue_status_route():
     try:
@@ -1062,6 +888,7 @@ def get_queue_status_route():
 
 @app.route("/api/queue/stats/tokens", methods=["GET"])
 @app.route("/api/tokens/stats", methods=["GET"])
+@limiter.exempt
 @login_required
 def get_token_stats_route():
     stats = query_db("""
