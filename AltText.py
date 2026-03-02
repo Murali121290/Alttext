@@ -235,10 +235,10 @@ def init_db():
         for index_sql in indexes:
             try:
                 cur.execute(index_sql)
+                conn.commit()
             except Exception as e:
                 logger.warning(f"Index creation warning (may already exist): {e}")
-
-        conn.commit()
+                conn.rollback()
 
         # Reset any jobs/batches that were left 'processing' due to a crash or corruption
         cur.execute("UPDATE jobs SET status = 'failed', error_msg = 'System crashed or corrupt file prevented completion.' WHERE status = 'processing'")
@@ -267,9 +267,17 @@ def init_db():
                 pass
         else:
             # Mark existing admin with default password to require change
-            cur.execute(f"SELECT * FROM users WHERE username = {placeholder}", ('admin',))
-            admin = cur.fetchone()
-            if admin and check_password_hash(admin['password'], 'admin123'):
+            if IS_SQLITE:
+                cur.execute(f"SELECT * FROM users WHERE username = {placeholder}", ('admin',))
+                admin = cur.fetchone()
+                admin_password = admin[2] if admin else None  # password is column index 2
+            else:
+                dict_cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                dict_cur.execute("SELECT * FROM users WHERE username = %s", ('admin',))
+                admin = dict_cur.fetchone()
+                dict_cur.close()
+                admin_password = admin['password'] if admin else None
+            if admin and admin_password and check_password_hash(admin_password, 'admin123'):
                 cur.execute(f"UPDATE users SET must_change_password = {placeholder} WHERE username = {placeholder}", (True, 'admin'))
                 conn.commit()
                 logger.warning("Default admin password detected - password change will be required on next login")
