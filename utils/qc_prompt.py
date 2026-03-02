@@ -15,11 +15,13 @@ Evaluate using the checklist below:
 - Are labeled terminology, processes, or cause-effect relationships accurately explained?
 - If the figure shows a pathway, cycle, or sequence, is the order described correctly?
 
-📊 2. Completeness of Visual Information
+📊 2. Completeness of Visual Information (CRITICAL FOR TEXT-HEAVY PAGES)
 - Are all major components described (including across multi-part figures)?
-- Is ANY embedded instructional text (chapter outlines, objectives, definitions, labels) missing?
+- **TEXT-HEAVY PAGES**: If the page contains substantial instructional text (definitions, worked examples, calculations, step-by-step solutions), verify that EVERY section is transcribed. Count the number of distinct sections/examples on the page and ensure ALL are captured. Missing even ONE section is a critical failure.
+- Is ANY embedded instructional text (chapter outlines, objectives, definitions, labels, mathematical derivations) missing?
 - Are legends, color codes, and symbols explained if meaningful?
 - Are ALL functional relationships in models/diagrams explained (e.g., direction of arrows)?
+- For pages with multiple worked problems or examples: Verify each problem is fully transcribed with all steps shown.
 
 🎓 3. Pedagogical Value
 - Does it capture the figure’s instructional purpose and state why it exists in the lesson?
@@ -49,10 +51,12 @@ You MUST return a valid JSON object matching this exact structure:
 
 🔎 Final Rejection Rules (Must output ❌ Needs full rewrite if ANY of these are true):
 - Decorative elements, overly literal aesthetic details, or layout directions dominate.
-- Any instructional content, reading text, or subfigure is omitted.
+- **CRITICAL**: Any instructional content, reading text, worked example, calculation step, or subfigure is omitted. For text-heavy pages, if less than 90% of the instructional content is captured, it must be rejected.
+- **CRITICAL**: For pages with multiple sections (e.g., Section A, Section B, Example 1, Example 2), if any complete section is missing, it must be rejected. Count the sections visible on the page and verify all are mentioned in the alt text.
 - Tone is interpretive or contains unverified clinical diagnoses not explicitly written in the image.
 - Caption content is duplicated.
 - Functional relationships and directional arrows in models are NOT explained.
+- Tables, equations, or mathematical notation are present but not transcribed.
 """
 
     rules_path = os.path.join(os.path.dirname(__file__), 'alt_text_rules.json')
