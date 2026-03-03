@@ -344,6 +344,10 @@ SELF-CHECK: After writing your alt text, verify you captured 100% of the instruc
                                 raise Exception(f"QC validation failed: {qc_decision}. {qc_data.get('justification', '')}")
                         
                     except Exception as e:
+                        # Re-raise QC validation failures so they propagate to
+                        # process_single_image_with_retry for a proper retry.
+                        if "QC validation failed" in str(e):
+                            raise
                         logger.error(f"QC Validation failed for item on page {absolute_page_num}: {e}")
                         qc_item["qc_completeness"] = "Error"
                         qc_item["qc_accuracy"] = "Error"
@@ -360,6 +364,9 @@ SELF-CHECK: After writing your alt text, verify you captured 100% of the instruc
             
         except Exception as e:
             error_msg = str(e)
+            # QC validation failures must propagate to process_single_image_with_retry
+            if "QC validation failed" in error_msg:
+                raise
             if "429" in error_msg or "502" in error_msg or "500" in error_msg or "503" in error_msg or "quota" in error_msg.lower():
                 logger.warning(f"Gemini API error on page {absolute_page_num} (Attempt {attempt+1}/{MAX_RETRIES}): {e}")
                 if attempt < MAX_RETRIES - 1:
