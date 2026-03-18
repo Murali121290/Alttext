@@ -110,9 +110,9 @@ sudo docker compose logs -f web
 
 ### 5. Access the Application
 
-The application is running on port **5000**.
+The application is running on port **5001**.
 
--   **Browser:** `http://<your-server-ip>:5000`
+-   **Browser:** `http://<your-server-ip>:5001`
 -   **Default Admin Credentials:**
     -   Username: `admin`
     -   Password: `admin123` (Change this immediately after logging in!)
@@ -188,4 +188,42 @@ sudo rm /etc/nginx/sites-enabled/default  # Optional: Removes default welcome pa
 sudo systemctl restart nginx
 ```
 
-Now your application is accessible at `http://<your-ip>` (without port 5000). The application files remain safely in your home directory (e.g., `~/Alttext`), and Nginx forwards traffic to them.
+Now your application is accessible at `http://<your-ip>` (without port 5001). The application files remain safely in your home directory (e.g., `~/Alttext`), and Nginx forwards traffic to them.
+
+## SSL Certification with Let's Encrypt (Auto-Renewal)
+
+To secure your application with HTTPS using a free SSL certificate from Let's Encrypt, we will use **Certbot**. Certbot automatically configures Nginx and sets up a timer for auto-renewal.
+
+### 1. Install Certbot and the Nginx Plugin
+
+```bash
+sudo apt update
+sudo apt install -y certbot python3-certbot-nginx
+```
+
+### 2. Obtain and Install the SSL Certificate
+
+Run Certbot to automatically fetch the certificate and update your Nginx configuration. **Note:** You must have a valid domain name pointed to your server's IP address.
+
+Replace `your-domain.com` with your actual domain name:
+
+```bash
+sudo certbot --nginx -d your-domain.com -d www.your-domain.com
+```
+
+During the installation:
+- Enter your email address (for urgent renewal and security notices).
+- Agree to the Terms of Service.
+- Choose to **redirect** HTTP traffic to HTTPS when prompted (highly recommended).
+
+### 3. Verify Auto-Renewal
+
+Let's Encrypt certificates are valid for 90 days. The `certbot` package automatically installs a systemd timer or cron job to renew them before they expire.
+
+You can test the auto-renewal process with a dry run to ensure it works properly:
+
+```bash
+sudo certbot renew --dry-run
+```
+
+If the dry run succeeds without errors, your SSL certificates are fully configured to automatically renew in the background!

@@ -53,10 +53,12 @@ class FileValidator:
     MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
     MAX_BATCH_SIZE = 500 * 1024 * 1024  # 500 MB total per batch
 
-    ALLOWED_EXTENSIONS = {'.pdf', '.docx'}
+    ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.xlsx', '.xls'}
     ALLOWED_MIME_TYPES = {
         'application/pdf',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-excel'
     }
 
     @classmethod
@@ -108,16 +110,27 @@ class FileValidator:
             except Exception as e:
                 return False, f"Error validating PDF: {str(e)}"
 
-        # DOCX-specific validation
-        if ext == '.docx':
+        # DOCX and XLSX specific validation (both are ZIP archives)
+        if ext in ['.docx', '.xlsx']:
             try:
-                # DOCX files are ZIP archives
+                # DOCX/XLSX files are ZIP archives
                 with open(file_path, 'rb') as f:
                     header = f.read(4)
                     if header != b'PK\x03\x04':
-                        return False, "File does not appear to be a valid DOCX"
+                        return False, f"File does not appear to be a valid {ext.upper()}"
             except Exception as e:
-                return False, f"Error validating DOCX: {str(e)}"
+                return False, f"Error validating {ext.upper()}: {str(e)}"
+                
+        # XLS specific validation (OLE2 format)
+        if ext == '.xls':
+            try:
+                with open(file_path, 'rb') as f:
+                    header = f.read(8)
+                    # OLE2 signature
+                    if header != b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1':
+                        return False, "File does not appear to be a valid XLS"
+            except Exception as e:
+                return False, f"Error validating XLS: {str(e)}"
 
         return True, None
 

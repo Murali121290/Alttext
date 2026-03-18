@@ -24,8 +24,17 @@ def load_system_prompt():
             prompt_text += "\n"
             
         out_fmt = p.get("output_format", {})
-        prompt_text += f"{out_fmt.get('instruction', '')}\nWith Example:\n{out_fmt.get('example', '')}\n{out_fmt.get('empty_case', '')}"
         
+        prompt_text += f"\nOUTPUT FORMAT:\n{out_fmt.get('instruction', '')}\n"
+        
+        if "schema" in out_fmt:
+            prompt_text += f"Schema fields required:\n{json.dumps(out_fmt['schema'], indent=2)}\n"
+        elif "example" in out_fmt:
+            prompt_text += f"With Example:\n{out_fmt.get('example', '')}\n"
+        elif "fields" in out_fmt:
+            prompt_text += f"Fields required:\n{json.dumps(out_fmt['fields'], indent=2)}\n"
+            
+        prompt_text += f"\n{out_fmt.get('empty_case', '')}"        
         return prompt_text
     except Exception as e:
         print(f"Error loading prompt JSON: {e}")

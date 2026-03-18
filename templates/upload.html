@@ -32,7 +32,7 @@
                         :class="dragActive ? 'border-amber-400 bg-gradient-to-br from-amber-50 to-orange-50' : 'border-slate-200 hover:border-amber-300 hover:bg-slate-50'"
                         @click="$refs.fileInput.click()">
 
-                        <input type="file" x-ref="fileInput" class="hidden" multiple accept=".pdf,.docx"
+                        <input type="file" x-ref="fileInput" class="hidden" multiple accept=".pdf,.docx,.xlsx,.xls"
                             @change="handleFiles($event.target.files)">
 
                         <div class="w-20 h-20 mx-auto mb-6 rounded-2xl flex items-center justify-center transition-all bg-slate-100"
@@ -44,8 +44,13 @@
                         <p class="text-lg font-semibold text-slate-700 mb-2">
                             <span x-text="dragActive ? 'Drop files here' : 'Drag and drop files'"></span>
                         </p>
-                        <p class="text-sm text-slate-500 mb-4">
+                        <p class="text-sm text-slate-500 mb-2">
                             or click to browse from your computer
+                        </p>
+                        <p
+                            class="text-xs text-slate-400 mb-4 px-4 bg-amber-50 rounded-lg py-2 inline-block border border-amber-100">
+                            <strong>Note:</strong> Upload <strong>PDF/DOCX</strong> to write alt text (Gemini), or
+                            <strong>Excel (.xlsx/.xls)</strong> to run compliance validation (GPT-4o).
                         </p>
                     </div>
                 </div>
@@ -103,7 +108,24 @@
                 <template x-if="!isUploading">
                     <span class="flex items-center gap-2">
                         <i data-lucide="sparkles" class="h-5 w-5"></i>
-                        Start AI Processing
+                        Start Alt Text Processing
+                    </span>
+                </template>
+            </button>
+
+            <!-- Secondary Image Extract Button -->
+            <button @click="extractImages" :disabled="files.length === 0 || isUploading"
+                class="w-full py-3 px-6 rounded-2xl font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 transition-all duration-300 flex items-center justify-center gap-2 hover:bg-indigo-100 hover:border-indigo-300 disabled:opacity-50 disabled:cursor-not-allowed">
+                <template x-if="isExtracting">
+                    <span class="flex items-center gap-2">
+                        <i data-lucide="loader-2" class="h-4 w-4 animate-spin text-indigo-500"></i>
+                        Extracting Images...
+                    </span>
+                </template>
+                <template x-if="!isExtracting">
+                    <span class="flex items-center gap-2">
+                        <i data-lucide="image" class="h-4 w-4"></i>
+                        Extract PDF Images Only
                     </span>
                 </template>
             </button>
@@ -125,8 +147,7 @@
                     <i data-lucide="check" class="h-4 w-4 text-emerald-600"></i>
                 </div>
                 <div>
-                    <p class="font-medium text-emerald-800">Success!</p>
-                    <p class="text-sm text-emerald-600">Batch created. Redirecting...</p>
+                    <p class="font-medium text-emerald-800" x-text="successMessage"></p>
                 </div>
             </div>
         </div>
@@ -141,19 +162,38 @@
                     <input type="text" x-model="batchName" placeholder="e.g., Chapter 1-5"
                         class="w-full px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-400 transition-all placeholder:text-slate-400">
                 </div>
-                
-                <div class="flex items-start gap-3 pt-3 border-t border-slate-100">
-                    <div class="flex items-center h-5 mt-0.5">
-                        <input id="run_qc" type="checkbox" x-model="runQC"
-                            class="w-4 h-4 text-amber-600 bg-slate-100 border-slate-300 rounded focus:ring-amber-500 focus:ring-2">
-                    </div>
-                    <div>
-                        <label for="run_qc" class="text-sm font-medium text-slate-700 cursor-pointer">
-                            Strict QC Validation
+
+                <div class="pt-4 border-t border-slate-100">
+                    <label class="block text-sm font-semibold text-slate-700 mb-4">
+                        Processing Options
+                    </label>
+
+                    <div class="space-y-4">
+                        <label class="flex items-start gap-3 cursor-pointer group">
+                            <div class="relative flex items-center h-5">
+                                <input type="checkbox" x-model="runGemini"
+                                    class="w-5 h-5 rounded border-slate-300 text-amber-500 focus:ring-amber-500/20 transition-all cursor-pointer">
+                            </div>
+                            <div>
+                                <p class="text-sm font-medium text-slate-700 group-hover:text-slate-900">Run Gemini Alt
+                                    Text Generation</p>
+                                <p class="text-xs text-slate-500 mt-0.5">Extracts images from PDF/DOCX and writes
+                                    descriptions.</p>
+                            </div>
                         </label>
-                        <p class="text-xs text-slate-500 mt-1">
-                            Evaluates the generated alt text against strict academic standards. (Runs a second processing pass).
-                        </p>
+
+                        <label class="flex items-start gap-3 cursor-pointer group">
+                            <div class="relative flex items-center h-5">
+                                <input type="checkbox" x-model="runGpt"
+                                    class="w-5 h-5 rounded border-slate-300 text-amber-500 focus:ring-amber-500/20 transition-all cursor-pointer">
+                            </div>
+                            <div>
+                                <p class="text-sm font-medium text-slate-700 group-hover:text-slate-900">Run GPT-4o
+                                    Validation & Rewrite</p>
+                                <p class="text-xs text-slate-500 mt-0.5">Validates generated or uploaded Excel files
+                                    against guidelines.</p>
+                            </div>
+                        </label>
                     </div>
                 </div>
             </div>
@@ -169,10 +209,13 @@
             files: [],
             dragActive: false,
             batchName: '',
-            runQC: false,
+            runGemini: true,
+            runGpt: false,
             isUploading: false,
+            isExtracting: false,
             uploadError: null,
             uploadSuccess: false,
+            successMessage: '',
 
             handleFiles(fileList) {
                 const newFiles = Array.from(fileList);
@@ -202,7 +245,8 @@
                     formData.append('files', file);
                 });
                 formData.append('batch_name', this.batchName);
-                formData.append('run_qc', this.runQC);
+                formData.append('run_gemini', this.runGemini ? 'true' : 'false');
+                formData.append('run_gpt', this.runGpt ? 'true' : 'false');
 
                 try {
                     const res = await fetch('/api/queue/batch', {
@@ -216,6 +260,7 @@
                     }
                     const data = await res.json();
                     this.uploadSuccess = true;
+                    this.successMessage = 'Batch created. Redirecting...';
                     // Redirect to batch details
                     setTimeout(() => window.location.href = '/batch/' + data.batch.batch_id, 1000);
 
@@ -223,6 +268,67 @@
                     this.uploadError = err.message;
                 } finally {
                     this.isUploading = false;
+                }
+            },
+
+            async extractImages() {
+                if (this.files.length === 0) return;
+
+                // Ensure the first file is a PDF
+                const file = this.files[0];
+                if (!file.name.toLowerCase().endsWith('.pdf')) {
+                    this.uploadError = "Please select a PDF file first.";
+                    return;
+                }
+
+                this.isExtracting = true;
+                this.uploadError = null;
+
+                const formData = new FormData();
+                formData.append('files', file);
+
+                try {
+                    const res = await fetch('/api/extract_images', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (!res.ok) {
+                        const err = await res.json();
+                        throw new Error(err.error || 'Extraction failed');
+                    }
+
+                    // Handle the binary ZIP download
+                    const blob = await res.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.style.display = 'none';
+                    a.href = url;
+
+                    // Try to grab filename from Content-Disposition header if available
+                    let filename = 'ExtractedImages.zip';
+                    const disposition = res.headers.get('Content-Disposition');
+                    if (disposition && disposition.indexOf('attachment') !== -1) {
+                        const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+                        const matches = filenameRegex.exec(disposition);
+                        if (matches != null && matches[1]) {
+                            filename = matches[1].replace(/['"]/g, '');
+                        }
+                    }
+
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+
+                    this.uploadSuccess = true;
+                    this.successMessage = 'Images extracted directly to your downloads format!';
+                    setTimeout(() => { this.uploadSuccess = false; }, 4000);
+
+                } catch (err) {
+                    this.uploadError = err.message;
+                } finally {
+                    this.isExtracting = false;
                 }
             }
         }))

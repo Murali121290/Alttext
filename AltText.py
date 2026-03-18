@@ -15,7 +15,6 @@ import google.genai as genai
 import json
 import worker_tasks
 from utils.prompt_assets import SYSTEM_PROMPT
-from utils.qc_prompt import QC_VALIDATION_PROMPT
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from functools import wraps
@@ -45,7 +44,7 @@ import re
 load_dotenv()
 # genai.configure is no longer needed in new SDK, using Client instead.
 # Using a valid model from the available list or user preference
-MODEL_NAME = "gemini-3-pro-preview" 
+MODEL_NAME = "gemini-2.5-pro" 
 
 UPLOAD_FOLDER = "uploads"
 OUTPUT_FOLDER = "outputs"
@@ -181,6 +180,9 @@ def init_db():
             input_tokens INTEGER DEFAULT 0,
             output_tokens INTEGER DEFAULT 0,
             cost REAL DEFAULT 0.0,
+            gpt_input_tokens INTEGER DEFAULT 0,
+            gpt_output_tokens INTEGER DEFAULT 0,
+            gpt_cost REAL DEFAULT 0.0,
             error_msg TEXT,
             created_at TIMESTAMP {ts_default},
             FOREIGN KEY(batch_id) REFERENCES batches(id)
@@ -207,15 +209,29 @@ def init_db():
             if IS_SQLITE:
                 # SQLite doesn't support IF NOT EXISTS in ALTER TABLE, so check first
                 cur.execute("PRAGMA table_info(users)")
-                columns = [row[1] for row in cur.fetchall()]
-                if 'must_change_password' not in columns:
+                u_cols = [row[1] for row in cur.fetchall()]
+                if 'must_change_password' not in u_cols:
                     cur.execute("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT FALSE")
-                if 'last_password_change' not in columns:
+                if 'last_password_change' not in u_cols:
                     cur.execute("ALTER TABLE users ADD COLUMN last_password_change TIMESTAMP")
+
+                cur.execute("PRAGMA table_info(jobs)")
+                j_cols = [row[1] for row in cur.fetchall()]
+                if 'gpt_input_tokens' not in j_cols:
+                    cur.execute("ALTER TABLE jobs ADD COLUMN gpt_input_tokens INTEGER DEFAULT 0")
+                if 'gpt_output_tokens' not in j_cols:
+                    cur.execute("ALTER TABLE jobs ADD COLUMN gpt_output_tokens INTEGER DEFAULT 0")
+                if 'gpt_cost' not in j_cols:
+                    cur.execute("ALTER TABLE jobs ADD COLUMN gpt_cost REAL DEFAULT 0.0")
+
             else:
                 # PostgreSQL supports IF NOT EXISTS
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT FALSE")
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_password_change TIMESTAMP")
+
+                cur.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS gpt_input_tokens INTEGER DEFAULT 0")
+                cur.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS gpt_output_tokens INTEGER DEFAULT 0")
+                cur.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS gpt_cost REAL DEFAULT 0.0")
             conn.commit()
         except Exception as e:
             logger.warning(f"Column migration warning (may be normal if columns exist): {e}")
@@ -713,7 +729,8 @@ def create_batch_route():
 
     files = request.files.getlist("files")
     batch_name = request.form.get("batch_name") or f"Batch {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
-    run_qc = request.form.get("run_qc") == "true"
+    run_gemini = request.form.get("run_gemini", "true").lower() == "true"
+    run_gpt = request.form.get("run_gpt", "false").lower() == "true"
 
     if not files:
         return jsonify({"error": "No files selected"}), 400
@@ -733,7 +750,7 @@ def create_batch_route():
 
         # Check extension
         filename_lower = f.filename.lower()
-        if not (filename_lower.endswith('.pdf') or filename_lower.endswith('.docx')):
+        if not (filename_lower.endswith('.pdf') or filename_lower.endswith('.docx') or filename_lower.endswith('.xlsx') or filename_lower.endswith('.xls')):
             validation_errors.append(f"{f.filename}: Invalid file type")
             continue
 
@@ -764,7 +781,7 @@ def create_batch_route():
         valid_files.append((safe_filename, final_path))
 
     if not valid_files:
-        error_summary = "; ".join(validation_errors) if validation_errors else "No valid PDF or DOCX files found"
+        error_summary = "; ".join(validation_errors) if validation_errors else "No valid PDF, DOCX, or Excel files found"
         return jsonify({"error": error_summary}), 400
 
     if validation_errors:
@@ -780,10 +797,10 @@ def create_batch_route():
                          (batch_id, filename, 'pending'), commit=True, return_id=True)
         jobs_to_process.append((job_id, filepath))
             
-    # Delegate background processing to a local thread (Reverting to original architecture)
+    # Delegate background processing to a local thread
     thread = threading.Thread(
         target=worker_tasks.run_batch_processing,
-        args=(batch_id, jobs_to_process, run_qc)
+        args=(batch_id, jobs_to_process, run_gemini, run_gpt)
     )
     thread.daemon = True
     thread.start()
@@ -803,6 +820,68 @@ def create_batch_route():
         },
         "success": True
     })
+
+import zipfile
+from utils.pdf_image_extractor import extract_images_to_excel
+
+@app.route("/api/extract_images", methods=["POST"])
+@limiter.limit("20 per hour")
+@login_required
+def extract_images_only_route():
+    if "files" not in request.files:
+        return jsonify({"error": "No files uploaded"}), 400
+
+    files = request.files.getlist("files")
+    if not files or not files[0].filename:
+        return jsonify({"error": "No files selected"}), 400
+
+    f = files[0] # We only process the first file for this quick tool
+    filename_lower = f.filename.lower()
+    
+    if not filename_lower.endswith('.pdf'):
+        return jsonify({"error": "Only PDF files are supported for Image Extraction"}), 400
+
+    safe_filename = sanitize_filename(f.filename)
+    temp_pdf_path = os.path.join(UPLOAD_FOLDER, f"extract_temp_{safe_filename}")
+    f.save(temp_pdf_path)
+
+    base_name = os.path.splitext(safe_filename)[0]
+    extraction_folder = os.path.join(OUTPUT_FOLDER, f"{base_name}_images")
+    excel_name = f"{base_name}_ImageReport.xlsx"
+
+    try:
+        # Call the new module
+        report_path = extract_images_to_excel(temp_pdf_path, extraction_folder, excel_name)
+        
+        if not report_path or not os.path.exists(extraction_folder):
+             return jsonify({"error": "Extraction failed"}), 500
+
+        # Zip the output folder
+        zip_filename = f"{base_name}_ExtractedImages.zip"
+        zip_path = os.path.join(OUTPUT_FOLDER, zip_filename)
+
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, dirs, files_in_dir in os.walk(extraction_folder):
+                for file in files_in_dir:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, extraction_folder)
+                    zipf.write(file_path, arcname)
+
+        # Clean up temp PDF and raw extraction folder
+        if os.path.exists(temp_pdf_path):
+            os.remove(temp_pdf_path)
+            
+        import shutil
+        if os.path.exists(extraction_folder):
+            shutil.rmtree(extraction_folder)
+
+        # Return the zip file securely
+        real_path = os.path.realpath(zip_path)
+        return send_file(real_path, as_attachment=True, download_name=zip_filename)
+
+    except Exception as e:
+        logger.error(f"Image extraction route failed: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/queue/batches", methods=["GET"]) 
 @app.route("/api/batches", methods=["GET"])
@@ -901,43 +980,65 @@ def get_queue_status_route():
 def get_token_stats_route():
     stats = query_db("""
         SELECT 
-            SUM(input_tokens) as total_input, 
-            SUM(output_tokens) as total_output, 
-            SUM(cost) as total_cost,
+            SUM(input_tokens) as total_gemini_in, 
+            SUM(output_tokens) as total_gemini_out, 
+            SUM(cost) as total_gemini_cost,
+            SUM(gpt_input_tokens) as total_gpt_in,
+            SUM(gpt_output_tokens) as total_gpt_out,
+            SUM(gpt_cost) as total_gpt_cost,
             COUNT(*) as total_jobs
         FROM jobs 
         WHERE status = 'completed'
     """, one=True)
     
     today_stats = query_db("""
-        SELECT SUM(cost) as today_cost 
+        SELECT 
+            SUM(cost) as gemini_today_cost,
+            SUM(gpt_cost) as gpt_today_cost
         FROM jobs 
         WHERE status = 'completed' AND date(created_at) = CURRENT_DATE
     """, one=True)
 
-    total_input = stats['total_input'] or 0
-    total_output = stats['total_output'] or 0
-    total_cost = stats['total_cost'] or 0.0
+    gem_in = stats['total_gemini_in'] or 0
+    gem_out = stats['total_gemini_out'] or 0
+    gem_cost = stats['total_gemini_cost'] or 0.0
+
+    gpt_in = stats['total_gpt_in'] or 0
+    gpt_out = stats['total_gpt_out'] or 0
+    gpt_cost = stats['total_gpt_cost'] or 0.0
+
     total_jobs = stats['total_jobs'] or 0
-    today_cost = today_stats['today_cost'] or 0.0 if today_stats else 0.0
-    avg_cost = total_cost / total_jobs if total_jobs > 0 else 0
+    
+    gem_today = today_stats['gemini_today_cost'] or 0.0 if today_stats else 0.0
+    gpt_today = today_stats['gpt_today_cost'] or 0.0 if today_stats else 0.0
+
+    gem_avg = gem_cost / total_jobs if total_jobs > 0 else 0
+    gpt_avg = gpt_cost / total_jobs if total_jobs > 0 else 0
     
     return jsonify({
-        "all_time": {
-            "total_tokens": total_input + total_output,
-            "input_tokens": total_input,
-            "output_tokens": total_output,
-            "total_jobs": total_jobs,
-            "cost": { "total_cost": total_cost }
+        "gemini": {
+            "all_time": {
+                "total_tokens": gem_in + gem_out,
+                "input_tokens": gem_in,
+                "output_tokens": gem_out,
+                "total_jobs": total_jobs,
+                "cost": { "total_cost": gem_cost }
+            },
+            "today": { "cost": { "total_cost": gem_today } },
+            "averages": { "cost_per_job": gem_avg },
+            "pricing": { "model": MODEL_NAME }
         },
-        "today": {
-            "cost": { "total_cost": today_cost }
-        },
-        "averages": {
-            "cost_per_job": avg_cost
-        },
-        "pricing": {
-            "model": MODEL_NAME
+        "gpt": {
+            "all_time": {
+                "total_tokens": gpt_in + gpt_out,
+                "input_tokens": gpt_in,
+                "output_tokens": gpt_out,
+                "total_jobs": total_jobs,
+                "cost": { "total_cost": gpt_cost }
+            },
+            "today": { "cost": { "total_cost": gpt_today } },
+            "averages": { "cost_per_job": gpt_avg },
+            "pricing": { "model": "gpt-4o" }
         }
     })
 

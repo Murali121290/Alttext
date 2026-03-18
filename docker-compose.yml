@@ -5,7 +5,7 @@ services:
     build: .
     container_name: alttext_app
     ports:
-      - "5000:5000"
+      - "5001:5000"
     volumes:
       - ./uploads:/app/uploads
       - ./outputs:/app/outputs

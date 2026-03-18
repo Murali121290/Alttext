@@ -15,7 +15,12 @@
                 "figure shows",
                 "figure illustrating",
                 "diagram of",
-                "view of"
+                "view of",
+                "diagram",
+                "flowchart",
+                "flow chart",
+                "chart",
+                "illustration"
             ]
         },
         "unnecessary_action_verbs": {
