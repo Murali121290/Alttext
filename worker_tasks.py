@@ -750,6 +750,31 @@ def run_excel_validation(job_id, filepath, conn):
         gpt_in = 0
         gpt_out = 0
 
+        # If the uploaded Excel already has an "Original Total/100" score >= 95,
+        # skip GPT validation and rewrite entirely — no improvement needed.
+        existing_score_raw = row.get("Original\nTotal/100") or row.get("Original Total/100")
+        try:
+            existing_score = int(float(str(existing_score_raw))) if existing_score_raw not in (None, "", "nan") else None
+        except (ValueError, TypeError):
+            existing_score = None
+
+        if existing_score is not None and existing_score >= 95:
+            scores = {
+                "total": existing_score,
+                "decision": "Publication-ready (gold standard)",
+            }
+            rewritten_alt = original_alt
+            rewritten_scores = scores.copy()
+            logger.info(f"Job {job_id}: Row {idx+1}/{total_rows} skipped (pre-scored {existing_score}/100 ≥ 95)")
+            entry = {col: str(row.get(col, "")) for col in df.columns}
+            entry["domain"]           = domain
+            entry["context_type"]     = context_type
+            entry["rewritten_alt"]    = rewritten_alt
+            entry["scores"]           = scores
+            entry["rewritten_scores"] = rewritten_scores
+            entry["alt_col_name"]     = alt_col
+            return idx, entry, gpt_in, gpt_out
+
         scores, val_usage = _gpt_validate_alt_text(client, original_alt, domain=domain, context_type=context_type)
         gpt_in += val_usage.get("input", 0)
         gpt_out += val_usage.get("output", 0)
@@ -758,7 +783,7 @@ def run_excel_validation(job_id, filepath, conn):
         # avoid generating garbage rewrites on top of broken score objects.
         rewritten_alt = ""
         rewritten_scores = None
-        
+
         if scores and scores.get("decision") != "Validation error":
             # Only trigger rewrite for scores < 95
             if scores.get("total", 0) < 95:
