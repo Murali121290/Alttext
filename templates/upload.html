@@ -219,8 +219,8 @@
 
             handleFiles(fileList) {
                 const newFiles = Array.from(fileList);
-                // Filter logic can be added here
                 this.files = [...this.files, ...newFiles];
+                this.syncOptionsToFiles();
             },
             handleDrop(e) {
                 this.dragActive = false;
@@ -229,6 +229,13 @@
             },
             removeFile(index) {
                 this.files.splice(index, 1);
+                this.syncOptionsToFiles();
+            },
+            syncOptionsToFiles() {
+                const hasExcel = this.files.some(f => /\.(xlsx|xls)$/i.test(f.name));
+                const hasDoc = this.files.some(f => /\.(pdf|docx)$/i.test(f.name));
+                if (hasExcel) this.runGpt = true;
+                if (hasDoc) this.runGemini = true;
             },
             formatSize(bytes) {
                 if (bytes < 1024) return bytes + ' B';
