@@ -233,6 +233,7 @@ Please provide an improved version that strictly follows these rules:
 7. NO SURROUNDING TEXT BLEED: Describe ONLY the image element. Do NOT reproduce or paraphrase surrounding page body text.
 8. NAME PUBLIC FIGURES: Verifiable well-known public figures (e.g., presidents, celebrities) must be explicitly named, not described generically.
 9. SUMMARIZE TEXT-HEAVY CONTENT: Never reproduce body-text paragraphs, bullet lists, or worked examples verbatim. Summarize text-heavy content.
+10. NO LEADING ARTICLE: Do NOT start alt text with "A", "An", or "The". Begin directly with the subject or action word.
 """
     rules_path = os.path.join(os.path.dirname(__file__), 'utils', 'alt_text_rules.json')
     rules_loaded = False
@@ -951,17 +952,11 @@ def clean_alt_text(text):
     # Strip figure-number references
     text = re.sub(r'\b(Figure|Fig\.?)\s*[\d.]+[:\s]+', '', text, flags=re.IGNORECASE)
 
-    # FIX 6 — The previous code stripped any leading "a ", "an ", or "the " unconditionally,
-    # turning "A student stands at a whiteboard" into "student stands at a whiteboard".
-    # We now only strip the article when it introduces a generic image description noun
-    # (image, photo, picture, diagram, screenshot, figure, illustration, graphic, chart, map).
-    _IMAGE_NOUNS = r'(?:image|photo(?:graph)?|picture|diagram|screenshot|figure|illustration|graphic|chart|map)'
-    text = re.sub(
-        r'^(?:a|an|the)\s+' + _IMAGE_NOUNS + r'\b\s*(?:of\s+)?',
-        '',
-        text,
-        flags=re.IGNORECASE
-    )
+    # Strip any leading "A ", "An ", or "The " — alt text should begin directly
+    # with the subject or action word, not an article.
+    text = re.sub(r'^(?:a|an|the)\s+', '', text, flags=re.IGNORECASE)
+    if text and text[0].islower():
+        text = text[0].upper() + text[1:]
 
     return text.strip()
 
