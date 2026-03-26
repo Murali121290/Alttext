@@ -13,6 +13,12 @@
         <div class="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center shrink-0">
             <h2 class="font-bold text-slate-800">Markup Tools</h2>
             <div class="flex gap-2">
+                <button @click="sortRegions()" title="Sort by Page" class="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-xs transition-colors flex items-center gap-1 shadow-sm font-medium">
+                    <i data-lucide="arrow-up-down" class="w-3 h-3 pointer-events-none"></i> Sort
+                </button>
+                <button @click="refreshLucide()" title="Refresh" class="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-xs transition-colors flex items-center gap-1 shadow-sm font-medium">
+                    <i data-lucide="refresh-cw" class="w-3 h-3 pointer-events-none"></i> Refresh
+                </button>
                 <button @click="undoLastRegion()" :disabled="!canUndo" title="Undo Last Box (Ctrl+Z)" class="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-xs disabled:opacity-50 transition-colors flex items-center gap-1 shadow-sm font-medium">
                     <i data-lucide="undo-2" class="w-3 h-3"></i> Undo
                 </button>
@@ -199,6 +205,14 @@ function markupApp() {
                     break;
                 }
             }
+        },
+
+        sortRegions() {
+            this.regions = [...this.regions].sort((a, b) => {
+                if (a.page !== b.page) return a.page - b.page;
+                return (a.y0_pct ?? 0) - (b.y0_pct ?? 0);
+            });
+            this.refreshLucide();
         },
 
         getPageRegions(pageIndex) {

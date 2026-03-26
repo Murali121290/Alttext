@@ -25,6 +25,9 @@
                 <button @click="sortRegions()" title="Sort by Page" class="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-xs transition-colors flex items-center gap-1 shadow-sm font-medium">
                     <i data-lucide="arrow-up-down" class="w-3 h-3 pointer-events-none"></i> Sort
                 </button>
+                <button @click="refreshLucide()" title="Refresh" class="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-xs transition-colors flex items-center gap-1 shadow-sm font-medium">
+                    <i data-lucide="refresh-cw" class="w-3 h-3 pointer-events-none"></i> Refresh
+                </button>
                 <button @click="undoLastRegion()" :disabled="!canUndo" title="Undo Last Box (Ctrl+Z)" class="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-xs disabled:opacity-50 transition-colors flex items-center gap-1 shadow-sm font-medium">
                     <i data-lucide="undo-2" class="w-3 h-3 pointer-events-none"></i> Undo
                 </button>
@@ -300,35 +303,45 @@ function reviewApp(jobId, pdfFilename) {
                 observer.disconnect();
             }
 
-            // Track which pages are currently visible for currentPage detection
-            const visiblePages = new Set();
-
+            // Render observer — wide margin so pages load before scrolling into view
             observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        this.renderPageIfVisible(parseInt(entry.target.dataset.page), entry.target);
+                    }
+                });
+            }, {
+                root: this.$refs.container,
+                rootMargin: '800px 0px'
+            });
+
+            // Page-tracking observer — tight margin, tracks which page is at the top of the viewport
+            const visiblePages = new Set();
+            const pageTracker = new IntersectionObserver((entries) => {
                 entries.forEach(entry => {
                     const pageIndex = parseInt(entry.target.dataset.page);
                     if (entry.isIntersecting) {
-                        this.renderPageIfVisible(pageIndex, entry.target);
                         visiblePages.add(pageIndex);
                     } else {
                         visiblePages.delete(pageIndex);
                     }
                 });
-                // Update currentPage to the topmost visible page
                 if (visiblePages.size > 0) {
                     this.currentPage = Math.min(...visiblePages);
                 }
             }, {
                 root: this.$refs.container,
-                rootMargin: '800px 0px',
+                rootMargin: '0px',
                 threshold: 0.01
             });
 
             // Start observing immediately after DOM updates
             this.$nextTick(() => {
                 const containers = this.$refs.container.querySelectorAll('[data-page]');
-                containers.forEach(el => observer.observe(el));
-
-                // Manual fallback for initial view
+                containers.forEach(el => {
+                    observer.observe(el);
+                    pageTracker.observe(el);
+                });
                 this.onScroll();
             });
         },
