@@ -300,16 +300,27 @@ function reviewApp(jobId, pdfFilename) {
                 observer.disconnect();
             }
 
+            // Track which pages are currently visible for currentPage detection
+            const visiblePages = new Set();
+
             observer = new IntersectionObserver((entries) => {
                 entries.forEach(entry => {
                     const pageIndex = parseInt(entry.target.dataset.page);
                     if (entry.isIntersecting) {
                         this.renderPageIfVisible(pageIndex, entry.target);
+                        visiblePages.add(pageIndex);
+                    } else {
+                        visiblePages.delete(pageIndex);
                     }
                 });
+                // Update currentPage to the topmost visible page
+                if (visiblePages.size > 0) {
+                    this.currentPage = Math.min(...visiblePages);
+                }
             }, {
                 root: this.$refs.container,
-                rootMargin: '800px 0px'
+                rootMargin: '800px 0px',
+                threshold: 0.01
             });
 
             // Start observing immediately after DOM updates
