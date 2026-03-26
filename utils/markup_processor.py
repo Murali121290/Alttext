@@ -375,51 +375,100 @@ def write_markup_excel(results: list, output_path: str, pdf_filename: str = "") 
             pass
 
 
+def _embed_crop_image(ws, crop_b64: str, excel_row: int, col_letter: str = "D") -> str | None:
+    """Decode a base64 crop PNG and embed it in the given cell. Returns temp path or None."""
+    if not crop_b64:
+        return None
+    try:
+        img_bytes = base64.b64decode(crop_b64)
+        pil_img = Image.open(io.BytesIO(img_bytes))
+        if pil_img.mode != "RGB":
+            pil_img = pil_img.convert("RGB")
+        max_size = 200
+        ratio = min(max_size / pil_img.width, max_size / pil_img.height)
+        if ratio < 1:
+            pil_img = pil_img.resize(
+                (int(pil_img.width * ratio), int(pil_img.height * ratio)),
+                Image.LANCZOS,
+            )
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            tmp_path = tmp.name
+        pil_img.save(tmp_path, format="PNG")
+        xl_img = OpenpyxlImage(tmp_path)
+        ws.add_image(xl_img, f"{col_letter}{excel_row}")
+        return tmp_path
+    except Exception:
+        return None
+
+
 def update_review_excel(results: list, excel_path: str) -> None:
     """
     Update short_alt and long_alt in an existing batch-output Excel in-place.
+    Preserves all original columns and images. Embeds crop thumbnails for new rows.
     Pre-existing rows (id <= data row count) are updated by row index.
     New user-drawn rows are appended.
+
+    Column layout (same as batch pipeline):
+      A: File name  B: Figure number  C: Page number  D: Image (thumbnail)
+      E: Short alt  F: Long alt  G: Word Count  H: Category  I: Context Type  J: Domain
     """
     from openpyxl import load_workbook
 
     wb = load_workbook(excel_path)
     ws = wb.active
 
-    # Row 1 is the header — data starts at row 2
-    max_data_row = ws.max_row - 1  # number of data rows
+    # Row 1 is the header — data rows start at row 2
+    max_data_row = ws.max_row - 1
 
-    # Short alt = col E (index 5), Long alt = col F (index 6)
-    SHORT_COL = 5
-    LONG_COL = 6
+    SHORT_COL = 5   # col E
+    LONG_COL  = 6   # col F
+
+    _tmp_paths = []
 
     for result in results:
         region_id = int(result.get("id", 0))
         raw_short = _clean_alt_text(_apply_json_rules(result.get("short_alt", "")))
-        raw_long = _clean_alt_text(_apply_json_rules(result.get("long_alt", "")))
+        raw_long  = _clean_alt_text(_apply_json_rules(result.get("long_alt", "")))
+        crop_b64  = result.get("crop_png_b64", "")
 
         if region_id <= max_data_row:
-            # Update existing row in-place
+            # Update existing row in-place (preserve all other columns and images)
             excel_row = region_id + 1  # region id=1 → Excel row 2
             ws.cell(row=excel_row, column=SHORT_COL).value = raw_short
-            ws.cell(row=excel_row, column=LONG_COL).value = raw_long
+            ws.cell(row=excel_row, column=LONG_COL).value  = raw_long
+            # Embed thumbnail if this region now has a crop (e.g. user refined it)
+            if crop_b64:
+                tmp = _embed_crop_image(ws, crop_b64, excel_row, "D")
+                if tmp:
+                    _tmp_paths.append(tmp)
         else:
             # New user-drawn region — append as new row
             page_1based = int(result.get("page", 0)) + 1
-            label = result.get("label", "").strip() or f"Figure {region_id}"
-            word_count = len(raw_long.split()) if raw_long else 0
-            category = "Simple" if word_count < 25 else ("Moderate" if word_count < 150 else "Complex")
+            label       = result.get("label", "").strip() or f"Figure {region_id}"
+            word_count  = len(raw_long.split()) if raw_long else 0
+            category    = "Simple" if word_count < 25 else ("Moderate" if word_count < 150 else "Complex")
+            new_row_idx = ws.max_row + 1
             ws.append([
-                "",          # File name
-                label,       # Figure number
-                page_1based, # Page number
-                "",          # Image
-                raw_short,   # Short alt text
-                raw_long,    # Long alt text
-                word_count,  # Word Count
-                category,    # Category
-                result.get("content_type", "General"),
-                result.get("domain", "General"),
+                "",           # A: File name (preserve original filename blank for user rows)
+                label,        # B: Figure number
+                page_1based,  # C: Page number
+                "",           # D: Image — embedded below
+                raw_short,    # E: Short alt text
+                raw_long,     # F: Long alt text
+                word_count,   # G: Word Count
+                category,     # H: Category
+                result.get("content_type", "General"),  # I: Context Type
+                result.get("domain", "General"),         # J: Domain
             ])
+            if crop_b64:
+                tmp = _embed_crop_image(ws, crop_b64, new_row_idx, "D")
+                if tmp:
+                    _tmp_paths.append(tmp)
 
     wb.save(excel_path)
+
+    for _tmp in _tmp_paths:
+        try:
+            os.unlink(_tmp)
+        except Exception:
+            pass
