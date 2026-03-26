@@ -1272,7 +1272,12 @@ def markup_export():
 
     try:
         from utils.markup_processor import write_markup_excel
-        output_filename = f"markup_{session_id[:8]}.xlsx"
+        name_file = os.path.join(MARKUP_FOLDER, session_id, "source_name.txt")
+        if os.path.exists(name_file):
+            with open(name_file, encoding="utf-8") as _f:
+                pdf_filename = _f.read().strip()
+        base_name = os.path.splitext(pdf_filename)[0]
+        output_filename = f"markup_{base_name}_alt_text.xlsx"
         output_path = os.path.join(OUTPUT_FOLDER, output_filename)
         write_markup_excel(results, output_path, pdf_filename=pdf_filename)
         return jsonify({"download_url": f"/download/{output_filename}"})
