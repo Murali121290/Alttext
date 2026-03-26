@@ -1378,8 +1378,14 @@ def get_job_review_data(job_id):
         for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
             if not row[0]: continue
             
+            import re
             try:
-                page_val = int(row[2]) - 1
+                page_str = str(row[2])
+                match = re.search(r'\d+', page_str)
+                if match:
+                    page_val = int(match.group()) - 1
+                else:
+                    page_val = 0
             except:
                 page_val = 0
                 

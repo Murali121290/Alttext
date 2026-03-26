@@ -403,7 +403,11 @@ def _embed_crop_image(ws, crop_b64: str, excel_row: int, col_letter: str = "D") 
 
 def update_review_excel(results: list, excel_path: str) -> None:
     """
-    Update short_alt / long_alt, fill file name, sort by page, and preserve images.
+    Rebuild the Excel file from the frontend's complete region list.
+
+    The frontend sends every current region (including crop_png_b64 loaded
+    from the original file), so we can do a clean full-rebuild instead of
+    a fragile merge.  This eliminates duplicate rows caused by delete+redraw.
 
     Column layout:
       A: File name  B: Figure number  C: Page number  D: Image (thumbnail)
@@ -411,105 +415,91 @@ def update_review_excel(results: list, excel_path: str) -> None:
     """
     from openpyxl import load_workbook
 
-    wb = load_workbook(excel_path)
+    # Read pdf_filename from the existing file before overwriting it
+    pdf_filename = ""
+    try:
+        wb_old = load_workbook(excel_path, read_only=True, data_only=True)
+        ws_old = wb_old.active
+        for row in ws_old.iter_rows(min_row=2, max_row=2, values_only=True):
+            pdf_filename = str(row[0]) if row[0] else ""
+            break
+        wb_old.close()
+    except Exception:
+        pass
+
+    # Sort by page then by region id to preserve reading order
+    sorted_results = sorted(results, key=lambda r: (r.get("page", 0), r.get("id", 0)))
+
+    wb = Workbook()
     ws = wb.active
+    ws.title = "Alt Text"
 
-    max_data_row = ws.max_row - 1  # number of existing data rows
-
-    # Read file name from first data row (col A) to reuse for new rows
-    pdf_filename = ws.cell(row=2, column=1).value or ""
-
-    # ── Step 1: Extract existing image bytes keyed by current row index ──────
-    images_by_row: dict[int, bytes] = {}
-    for img in getattr(ws, "_images", []):
-        anchor = getattr(img, "anchor", None)
-        frm    = getattr(anchor, "_from", None)
-        if frm is not None:
-            row_1based = frm.row + 1       # openpyxl anchor is 0-based
-            try:
-                data = img._data()
-                if callable(data):
-                    data = data()
-                images_by_row[row_1based] = data
-            except Exception:
-                pass
-
-    # ── Step 2: Read all existing data rows into memory ───────────────────────
-    rows_mem: list[dict] = []
-    for row_idx in range(2, ws.max_row + 1):
-        rows_mem.append({
-            "orig_row": row_idx,
-            "data":     [ws.cell(row=row_idx, column=c).value for c in range(1, 11)],
-            "crop_b64": None,   # may be replaced below
-        })
-
-    # ── Step 3: Apply edits from review tool ─────────────────────────────────
-    for result in results:
-        region_id = int(result.get("id", 0))
-        raw_short = _clean_alt_text(_apply_json_rules(result.get("short_alt", "")))
-        raw_long  = _clean_alt_text(_apply_json_rules(result.get("long_alt", "")))
-        crop_b64  = result.get("crop_png_b64") or None
-
-        if region_id <= max_data_row:
-            r = rows_mem[region_id - 1]      # region id=1 → index 0
-            r["data"][4] = raw_short          # col E (0-based index 4)
-            r["data"][5] = raw_long           # col F
-            if crop_b64:
-                r["crop_b64"] = crop_b64
-        else:
-            # New user-drawn region
-            page_1based = int(result.get("page", 0)) + 1
-            label       = result.get("label", "").strip() or f"Figure {region_id}"
-            word_count  = len(raw_long.split()) if raw_long else 0
-            category    = "Simple" if word_count < 25 else ("Moderate" if word_count < 150 else "Complex")
-            rows_mem.append({
-                "orig_row": None,
-                "data": [
-                    pdf_filename,
-                    label,
-                    page_1based,
-                    "",          # D: thumbnail embedded below
-                    raw_short,
-                    raw_long,
-                    word_count,
-                    category,
-                    result.get("content_type", "General"),
-                    result.get("domain", "General"),
-                ],
-                "crop_b64": crop_b64,
-            })
-
-    # ── Step 4: Sort by page number (col C = index 2) ────────────────────────
-    rows_mem.sort(key=lambda r: int(r["data"][2]) if r["data"][2] else 0)
-
-    # ── Step 5: Clear existing data rows and images, rewrite sorted ──────────
-    ws.delete_rows(2, ws.max_row)
-    ws._images.clear()
+    headers = [
+        "File name", "Figure number", "Page number", "Image",
+        "Short alt text", "Long alt text", "Word Count", "Category",
+        "Context Type", "Domain",
+    ]
+    ws.append(headers)
 
     _tmp_paths = []
-    for new_row_idx, row_info in enumerate(rows_mem, start=2):
-        ws.append(row_info["data"])
 
-        orig = row_info["orig_row"]
-        crop = row_info["crop_b64"]
+    for row_idx, result in enumerate(sorted_results, 2):
+        raw_short = result.get("short_alt", "")
+        raw_long  = result.get("long_alt", "")
 
-        if crop:
-            tmp = _embed_crop_image(ws, crop, new_row_idx, "D")
-            if tmp:
-                _tmp_paths.append(tmp)
-        elif orig and orig in images_by_row:
-            # Re-embed original image bytes
+        final_short = _clean_alt_text(_apply_json_rules(raw_short))
+        final_long  = _clean_alt_text(_apply_json_rules(raw_long))
+
+        word_count = len(final_long.split()) if final_long else 0
+        if word_count < 25:
+            category = "Simple"
+        elif word_count < 150:
+            category = "Moderate"
+        else:
+            category = "Complex"
+
+        label       = result.get("label", "").strip() or f"Figure {row_idx - 1}"
+        page_1based = int(result.get("page", 0)) + 1
+
+        ws.append([
+            pdf_filename,
+            label,
+            page_1based,
+            "",          # D: thumbnail embedded below
+            final_short,
+            final_long,
+            word_count,
+            category,
+            result.get("content_type", "General"),
+            result.get("domain", "General"),
+        ])
+
+        crop_b64 = result.get("crop_png_b64") or ""
+        if crop_b64:
             try:
-                pil_img = Image.open(io.BytesIO(images_by_row[orig]))
+                img_bytes = base64.b64decode(crop_b64)
+                pil_img = Image.open(io.BytesIO(img_bytes))
                 if pil_img.mode != "RGB":
                     pil_img = pil_img.convert("RGB")
-                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_f:
-                    tmp_path = tmp_f.name
+                max_size = 200
+                ratio = min(max_size / pil_img.width, max_size / pil_img.height)
+                if ratio < 1:
+                    pil_img = pil_img.resize(
+                        (int(pil_img.width * ratio), int(pil_img.height * ratio)),
+                        Image.LANCZOS,
+                    )
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                    tmp_path = tmp.name
                 pil_img.save(tmp_path, format="PNG")
-                ws.add_image(OpenpyxlImage(tmp_path), f"D{new_row_idx}")
+                xl_img = OpenpyxlImage(tmp_path)
+                ws.add_image(xl_img, f"D{row_idx}")
+                ws.row_dimensions[row_idx].height = (xl_img.height * 0.75) + 10
+                needed_width = (xl_img.width / 7) + 2
+                if (ws.column_dimensions["D"].width or 10) < needed_width:
+                    ws.column_dimensions["D"].width = needed_width
                 _tmp_paths.append(tmp_path)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Review Excel: could not embed thumbnail row {row_idx}: {e}")
 
     wb.save(excel_path)
 

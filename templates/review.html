@@ -39,7 +39,7 @@
 
         <!-- Regions List -->
         <div class="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50">
-            <template x-for="region in pageRegions" :key="region.id">
+            <template x-for="region in sortedRegions" :key="region.id">
                 <div class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm relative group cursor-pointer transition-shadow" 
                      :class="{'ring-2 ring-emerald-500': selectedRegion && selectedRegion.id === region.id}"
                      @click="selectRegion(region)">
@@ -89,9 +89,6 @@
             </template>
             <div x-show="regions.length === 0" class="text-center text-slate-500 text-sm mt-10">
                 Draw regions on the PDF to generate alt text.
-            </div>
-            <div x-show="regions.length > 0 && pageRegions.length === 0" class="text-center text-slate-400 text-sm mt-10">
-                No regions on this page.
             </div>
         </div>
     </div>
@@ -198,6 +195,10 @@ function reviewApp(jobId, pdfFilename) {
             this.loadData();
         },
 
+
+        get currentPageRegions() {
+            return this.sortedRegions.filter(r => r.page === this.currentPage);
+        },
 
         get sortedRegions() {
             // Sort by page first, then by vertical (Y) position on the page
@@ -315,24 +316,15 @@ function reviewApp(jobId, pdfFilename) {
                 rootMargin: '800px 0px'
             });
 
-            // Page-tracking observer — tight margin, tracks which page is at the top of the viewport
-            const visiblePages = new Set();
-            const pageTracker = new IntersectionObserver((entries) => {
-                entries.forEach(entry => {
-                    const pageIndex = parseInt(entry.target.dataset.page);
-                    if (entry.isIntersecting) {
-                        visiblePages.add(pageIndex);
-                    } else {
-                        visiblePages.delete(pageIndex);
-                    }
-                });
-                if (visiblePages.size > 0) {
-                    this.currentPage = Math.min(...visiblePages);
-                }
+            // Page-tracking observer — fires when any page enters/leaves viewport,
+            // then delegates to onScroll() which picks the page whose top is closest
+            // to the container top (handles partial-overlap correctly)
+            const pageTracker = new IntersectionObserver(() => {
+                this.onScroll();
             }, {
                 root: this.$refs.container,
                 rootMargin: '0px',
-                threshold: 0.01
+                threshold: [0, 0.25, 0.5, 0.75, 1.0]
             });
 
             // Start observing immediately after DOM updates
@@ -352,7 +344,7 @@ function reviewApp(jobId, pdfFilename) {
             const containerRect = this.$refs.container.getBoundingClientRect();
 
             let closestPage = this.currentPage;
-            let minDistance = Infinity;
+            let maxVisibleRatio = 0;
 
             containers.forEach(el => {
                 const rect = el.getBoundingClientRect();
@@ -362,9 +354,14 @@ function reviewApp(jobId, pdfFilename) {
                     this.renderPageIfVisible(pageIndex, el);
                 }
 
-                const distance = Math.abs(rect.top - containerRect.top);
-                if (distance < minDistance) {
-                    minDistance = distance;
+                const visibleTop = Math.max(rect.top, containerRect.top);
+                const visibleBottom = Math.min(rect.bottom, containerRect.bottom);
+                const visibleHeight = Math.max(0, visibleBottom - visibleTop);
+                const pageHeight = rect.height || 1;
+                const ratio = visibleHeight / pageHeight;
+
+                if (ratio > maxVisibleRatio) {
+                    maxVisibleRatio = ratio;
                     closestPage = parseInt(el.dataset.page);
                 }
             });
