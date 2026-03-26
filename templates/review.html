@@ -205,7 +205,10 @@ function reviewApp(jobId, pdfFilename) {
         },
 
         get pageRegions() {
-            return this.sortedRegions.filter(r => r.page === this.currentPage);
+            const page = this.currentPage;
+            return [...this.regions]
+                .filter(r => r.page === page)
+                .sort((a, b) => (a.y0_pct ?? 0) - (b.y0_pct ?? 0));
         },
 
         sortRegions() {
