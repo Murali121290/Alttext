@@ -1088,6 +1088,9 @@ def markup_upload():
 
     pdf_path = os.path.join(session_dir, "source.pdf")
     f.save(pdf_path)
+    # Store original filename so the output Excel can use it
+    with open(os.path.join(session_dir, "source_name.txt"), "w", encoding="utf-8") as _fn:
+        _fn.write(sanitize_filename(f.filename))
 
     try:
         doc = fitz.open(pdf_path)
@@ -1196,8 +1199,14 @@ def markup_generate():
         from utils.markup_processor import process_markup_regions, write_markup_excel
         results = process_markup_regions(real_pdf, regions)
 
-        pdf_filename = os.path.basename(real_pdf)
-        output_filename = f"markup_{session_id[:8]}.xlsx"
+        name_file = os.path.join(MARKUP_FOLDER, session_id, "source_name.txt")
+        if os.path.exists(name_file):
+            with open(name_file, encoding="utf-8") as _f:
+                pdf_filename = _f.read().strip()
+        else:
+            pdf_filename = os.path.basename(real_pdf)
+        base_name = os.path.splitext(pdf_filename)[0]
+        output_filename = f"markup_{base_name}_alt_text.xlsx"
         output_path = os.path.join(OUTPUT_FOLDER, output_filename)
         write_markup_excel(results, output_path, pdf_filename=pdf_filename)
 
