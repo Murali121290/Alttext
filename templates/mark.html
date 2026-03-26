@@ -258,8 +258,13 @@ function markupApp() {
         },
 
         async loadPDF() {
-            const url = `/api/markup/pdf/${this.sessionId}`;
-            pdfDoc = await pdfjsLib.getDocument(url).promise;
+            const res = await fetch(`/api/markup/pdf/${this.sessionId}`, { credentials: 'same-origin' });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ error: res.statusText }));
+                throw new Error(err.error || 'PDF not found');
+            }
+            const buffer = await res.arrayBuffer();
+            pdfDoc = await pdfjsLib.getDocument({ data: buffer }).promise;
             
             if (observer) {
                 observer.disconnect();

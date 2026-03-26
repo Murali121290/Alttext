@@ -240,8 +240,14 @@ function reviewApp(jobId, pdfFilename) {
         },
 
         async loadPDF() {
-            const url = `/api/job/${this.jobId}/pdf`;
-            pdfDoc = await pdfjsLib.getDocument(url).promise;
+            // Pre-fetch with credentials so Flask session cookie is sent (avoids login-redirect HTML being parsed as PDF)
+            const res = await fetch(`/api/job/${this.jobId}/pdf`, { credentials: 'same-origin' });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ error: res.statusText }));
+                throw new Error(err.error || 'PDF not found');
+            }
+            const buffer = await res.arrayBuffer();
+            pdfDoc = await pdfjsLib.getDocument({ data: buffer }).promise;
             this.pageCount = pdfDoc.numPages;
 
             // Build pages meta
