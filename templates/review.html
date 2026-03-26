@@ -601,7 +601,7 @@ function reviewApp(jobId, pdfFilename) {
 
                 // Trigger download of the updated Excel file
                 const link = document.createElement('a');
-                link.href = data.download_url;
+                link.href = data.download_url + '?t=' + Date.now();
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);

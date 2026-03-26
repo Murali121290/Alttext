@@ -403,12 +403,9 @@ def _embed_crop_image(ws, crop_b64: str, excel_row: int, col_letter: str = "D") 
 
 def update_review_excel(results: list, excel_path: str) -> None:
     """
-    Update short_alt and long_alt in an existing batch-output Excel in-place.
-    Preserves all original columns and images. Embeds crop thumbnails for new rows.
-    Pre-existing rows (id <= data row count) are updated by row index.
-    New user-drawn rows are appended.
+    Update short_alt / long_alt, fill file name, sort by page, and preserve images.
 
-    Column layout (same as batch pipeline):
+    Column layout:
       A: File name  B: Figure number  C: Page number  D: Image (thumbnail)
       E: Short alt  F: Long alt  G: Word Count  H: Category  I: Context Type  J: Domain
     """
@@ -417,53 +414,102 @@ def update_review_excel(results: list, excel_path: str) -> None:
     wb = load_workbook(excel_path)
     ws = wb.active
 
-    # Row 1 is the header — data rows start at row 2
-    max_data_row = ws.max_row - 1
+    max_data_row = ws.max_row - 1  # number of existing data rows
 
-    SHORT_COL = 5   # col E
-    LONG_COL  = 6   # col F
+    # Read file name from first data row (col A) to reuse for new rows
+    pdf_filename = ws.cell(row=2, column=1).value or ""
 
-    _tmp_paths = []
+    # ── Step 1: Extract existing image bytes keyed by current row index ──────
+    images_by_row: dict[int, bytes] = {}
+    for img in getattr(ws, "_images", []):
+        anchor = getattr(img, "anchor", None)
+        frm    = getattr(anchor, "_from", None)
+        if frm is not None:
+            row_1based = frm.row + 1       # openpyxl anchor is 0-based
+            try:
+                data = img._data()
+                if callable(data):
+                    data = data()
+                images_by_row[row_1based] = data
+            except Exception:
+                pass
 
+    # ── Step 2: Read all existing data rows into memory ───────────────────────
+    rows_mem: list[dict] = []
+    for row_idx in range(2, ws.max_row + 1):
+        rows_mem.append({
+            "orig_row": row_idx,
+            "data":     [ws.cell(row=row_idx, column=c).value for c in range(1, 11)],
+            "crop_b64": None,   # may be replaced below
+        })
+
+    # ── Step 3: Apply edits from review tool ─────────────────────────────────
     for result in results:
         region_id = int(result.get("id", 0))
         raw_short = _clean_alt_text(_apply_json_rules(result.get("short_alt", "")))
         raw_long  = _clean_alt_text(_apply_json_rules(result.get("long_alt", "")))
-        crop_b64  = result.get("crop_png_b64", "")
+        crop_b64  = result.get("crop_png_b64") or None
 
         if region_id <= max_data_row:
-            # Update existing row in-place (preserve all other columns and images)
-            excel_row = region_id + 1  # region id=1 → Excel row 2
-            ws.cell(row=excel_row, column=SHORT_COL).value = raw_short
-            ws.cell(row=excel_row, column=LONG_COL).value  = raw_long
-            # Embed thumbnail if this region now has a crop (e.g. user refined it)
+            r = rows_mem[region_id - 1]      # region id=1 → index 0
+            r["data"][4] = raw_short          # col E (0-based index 4)
+            r["data"][5] = raw_long           # col F
             if crop_b64:
-                tmp = _embed_crop_image(ws, crop_b64, excel_row, "D")
-                if tmp:
-                    _tmp_paths.append(tmp)
+                r["crop_b64"] = crop_b64
         else:
-            # New user-drawn region — append as new row
+            # New user-drawn region
             page_1based = int(result.get("page", 0)) + 1
             label       = result.get("label", "").strip() or f"Figure {region_id}"
             word_count  = len(raw_long.split()) if raw_long else 0
             category    = "Simple" if word_count < 25 else ("Moderate" if word_count < 150 else "Complex")
-            new_row_idx = ws.max_row + 1
-            ws.append([
-                "",           # A: File name (preserve original filename blank for user rows)
-                label,        # B: Figure number
-                page_1based,  # C: Page number
-                "",           # D: Image — embedded below
-                raw_short,    # E: Short alt text
-                raw_long,     # F: Long alt text
-                word_count,   # G: Word Count
-                category,     # H: Category
-                result.get("content_type", "General"),  # I: Context Type
-                result.get("domain", "General"),         # J: Domain
-            ])
-            if crop_b64:
-                tmp = _embed_crop_image(ws, crop_b64, new_row_idx, "D")
-                if tmp:
-                    _tmp_paths.append(tmp)
+            rows_mem.append({
+                "orig_row": None,
+                "data": [
+                    pdf_filename,
+                    label,
+                    page_1based,
+                    "",          # D: thumbnail embedded below
+                    raw_short,
+                    raw_long,
+                    word_count,
+                    category,
+                    result.get("content_type", "General"),
+                    result.get("domain", "General"),
+                ],
+                "crop_b64": crop_b64,
+            })
+
+    # ── Step 4: Sort by page number (col C = index 2) ────────────────────────
+    rows_mem.sort(key=lambda r: int(r["data"][2]) if r["data"][2] else 0)
+
+    # ── Step 5: Clear existing data rows and images, rewrite sorted ──────────
+    ws.delete_rows(2, ws.max_row)
+    ws._images.clear()
+
+    _tmp_paths = []
+    for new_row_idx, row_info in enumerate(rows_mem, start=2):
+        ws.append(row_info["data"])
+
+        orig = row_info["orig_row"]
+        crop = row_info["crop_b64"]
+
+        if crop:
+            tmp = _embed_crop_image(ws, crop, new_row_idx, "D")
+            if tmp:
+                _tmp_paths.append(tmp)
+        elif orig and orig in images_by_row:
+            # Re-embed original image bytes
+            try:
+                pil_img = Image.open(io.BytesIO(images_by_row[orig]))
+                if pil_img.mode != "RGB":
+                    pil_img = pil_img.convert("RGB")
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_f:
+                    tmp_path = tmp_f.name
+                pil_img.save(tmp_path, format="PNG")
+                ws.add_image(OpenpyxlImage(tmp_path), f"D{new_row_idx}")
+                _tmp_paths.append(tmp_path)
+            except Exception:
+                pass
 
     wb.save(excel_path)
 
