@@ -1398,10 +1398,13 @@ def serve_job_pdf(job_id):
     if not job:
         return jsonify({"error": "Job not found"}), 404
         
+    if not job['filename'].lower().endswith('.pdf'):
+        return jsonify({"error": "no_pdf"}), 404
+
     pdf_path = os.path.join(UPLOAD_FOLDER, job['filename'])
     if not os.path.exists(pdf_path):
-        return jsonify({"error": "PDF not found"}), 404
-        
+        return jsonify({"error": "PDF not found on server"}), 404
+
     return send_file(pdf_path, mimetype="application/pdf")
 
 @app.route("/api/job/<int:job_id>/update", methods=["POST"])

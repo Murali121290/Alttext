@@ -107,8 +107,15 @@
             </div>
         </div>
 
+        <!-- No-PDF placeholder (Excel/DOCX jobs) -->
+        <div x-show="noPdf" class="flex-1 flex flex-col items-center justify-center gap-3 text-slate-500 bg-slate-100">
+            <i data-lucide="file-x" class="w-12 h-12 text-slate-300"></i>
+            <p class="text-sm font-medium">No PDF available</p>
+            <p class="text-xs text-slate-400">This job was processed from an Excel/DOCX file.<br>Edit the alt text directly in the panel on the left.</p>
+        </div>
+
         <!-- Scrollable Stacked Canvas Area -->
-        <div class="flex-1 overflow-auto p-4 flex flex-col items-center bg-slate-300 relative" x-ref="container" @scroll.passive="onScroll">
+        <div x-show="!noPdf" class="flex-1 overflow-auto p-4 flex flex-col items-center bg-slate-300 relative" x-ref="container" @scroll.passive="onScroll">
             <div class="w-full max-w-full flex flex-col items-center">
                 <template x-for="(pageMeta, index) in pages" :key="index">
                     <div class="relative shadow-xl bg-white mb-6 border border-slate-200" 
@@ -176,6 +183,7 @@ function reviewApp(jobId, pdfFilename) {
         
         regionCounter: 0,
         selectedRegion: null,
+        noPdf: false,
 
         init() {
             this.loadData();
@@ -243,8 +251,13 @@ function reviewApp(jobId, pdfFilename) {
             // Pre-fetch with credentials so Flask session cookie is sent (avoids login-redirect HTML being parsed as PDF)
             const res = await fetch(`/api/job/${this.jobId}/pdf`, { credentials: 'same-origin' });
             if (!res.ok) {
-                const err = await res.json().catch(() => ({ error: res.statusText }));
-                throw new Error(err.error || 'PDF not found');
+                const errData = await res.json().catch(() => ({ error: res.statusText }));
+                // Excel/DOCX jobs have no PDF — show message instead of crashing
+                if (errData.error === 'no_pdf') {
+                    this.noPdf = true;
+                    return;
+                }
+                throw new Error(errData.error || 'PDF not found');
             }
             const buffer = await res.arrayBuffer();
             pdfDoc = await pdfjsLib.getDocument({ data: buffer }).promise;
