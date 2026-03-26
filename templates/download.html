@@ -54,6 +54,14 @@
                             {{ (file.size / 1024)|round(1) }} KB
                         </td>
                         <td class="px-6 py-4 text-right">
+                            
+                            {% if file.job_id %}
+                            <a href="/review/{{ file.job_id }}"
+                                class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 transition-colors mr-2">
+                                <i data-lucide="eye" class="h-4 w-4"></i>
+                                Review
+                            </a>
+                            {% endif %}
                             <a href="/download/{{ file.name }}"
                                 class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-colors">
                                 <i data-lucide="download" class="h-4 w-4"></i>

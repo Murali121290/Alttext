@@ -19,6 +19,7 @@ env
 # Data
 uploads/*
 outputs/*
+markup_sessions/
 *.db
 *.sqlite3
 postgres_data/

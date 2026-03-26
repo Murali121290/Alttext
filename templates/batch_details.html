@@ -90,6 +90,11 @@
                     <!-- Actions -->
                     <div class="col-span-2 text-right">
                         <template x-if="job.status === 'completed' && job.output_file">
+                            <a :href="'/review/' + job.job_id"
+                                class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 hover:text-blue-800 transition-colors text-sm font-medium border border-blue-200">
+                                <i data-lucide="eye" class="h-4 w-4"></i>
+                                Review
+                            </a>
                             <a :href="'/download/' + job.output_file"
                                 class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 transition-colors text-sm font-medium border border-emerald-200">
                                 <i data-lucide="download" class="h-4 w-4"></i>
@@ -136,7 +141,7 @@
             async refresh(silent = false) {
                 if (!silent) this.loading = true;
                 try {
-                    const res = await fetch(`/api/queue/batch/${batchId}`);
+                    const res = await fetch(`/api/queue/batch/${batchId}`, { credentials: 'same-origin' });
                     if (res.ok) {
                         const data = await res.json();
 

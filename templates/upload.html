@@ -258,7 +258,8 @@
                 try {
                     const res = await fetch('/api/queue/batch', {
                         method: 'POST',
-                        body: formData
+                        body: formData,
+                        credentials: 'same-origin'
                     });
 
                     if (!res.ok) {
@@ -297,7 +298,8 @@
                 try {
                     const res = await fetch('/api/extract_images', {
                         method: 'POST',
-                        body: formData
+                        body: formData,
+                        credentials: 'same-origin'
                     });
 
                     if (!res.ok) {

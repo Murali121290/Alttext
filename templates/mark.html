@@ -1,0 +1,598 @@
+{% extends "base.html" %}
+
+{% block content %}
+<script src="/static/js/pdf.min.js"></script>
+<script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/js/pdf.worker.min.js';
+</script>
+
+<div x-data="markupApp()" @keydown.window.ctrl.z.prevent="undoLastRegion()" class="h-[calc(100vh-80px)] overflow-hidden flex flex-col md:flex-row gap-4 p-4 relative w-full">
+
+    <!-- Sidebar: Upload & List of Regions -->
+    <div class="w-full md:w-1/3 bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col overflow-hidden max-h-full">
+        <div class="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center shrink-0">
+            <h2 class="font-bold text-slate-800">Markup Tools</h2>
+            <div class="flex gap-2">
+                <button @click="undoLastRegion()" :disabled="!canUndo" title="Undo Last Box (Ctrl+Z)" class="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-xs disabled:opacity-50 transition-colors flex items-center gap-1 shadow-sm font-medium">
+                    <i data-lucide="undo-2" class="w-3 h-3"></i> Undo
+                </button>
+                <button @click="exportData()" :disabled="!sessionId || regions.length === 0 || isExporting" class="px-3 py-1 rounded text-sm transition-colors shadow-sm font-medium" style="background-color: #059669; color: white;" :style="(!sessionId || regions.length === 0 || isExporting) ? 'opacity: 0.5; cursor: not-allowed;' : 'opacity: 1; cursor: pointer;'">
+                    <span x-text="isExporting ? 'Exporting...' : 'Export to Excel'"></span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Upload State -->
+        <div x-show="!sessionId" class="p-6 flex flex-col items-center justify-center flex-1">
+            <label class="cursor-pointer group w-full">
+                <div class="h-32 w-full border-2 border-dashed border-emerald-300 rounded-xl flex flex-col items-center justify-center bg-emerald-50 group-hover:bg-emerald-100 transition-colors p-6">
+                    <i data-lucide="upload-cloud" class="h-8 w-8 text-emerald-500 mb-2"></i>
+                    <span class="text-sm font-medium text-emerald-700">Select PDF to Markup</span>
+                </div>
+                <input type="file" class="hidden" accept=".pdf" @change="uploadPDF($event)" :disabled="isUploading">
+            </label>
+            <p x-show="isUploading" class="mt-4 text-sm text-slate-500 flex items-center gap-2"><i data-lucide="loader-2" class="animate-spin w-4 h-4"></i> Uploading and processing...</p>
+        </div>
+
+        <!-- Regions List -->
+        <div x-show="sessionId" class="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50" x-cloak>
+            <template x-for="region in regions" :key="region.id">
+                <div class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm relative group cursor-pointer transition-shadow" 
+                     :class="{'ring-2 ring-emerald-500': selectedRegion && selectedRegion.id === region.id}"
+                     @click="selectRegion(region)">
+                    
+                    <div class="flex items-start justify-between mb-1">
+                        <h3 class="font-semibold text-sm text-slate-700 flex items-center gap-2">
+                            <span class="bg-amber-500 text-white px-1.5 py-0.5 rounded text-[10px]" x-text="'#' + region.id"></span>
+                            <span x-text="'Page ' + (region.page + 1)"></span>
+                        </h3>
+                        <button @click.stop="deleteRegion(region.id)" title="Delete Region" class="text-red-500 hover:text-red-700 transition-colors bg-red-50 hover:bg-red-100 rounded p-1.5 border border-red-100 flex-shrink-0">
+                            <i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i>
+                        </button>
+                    </div>
+                    <p class="text-xs text-slate-500 mb-2 truncate" x-text="region.label || 'User Drawn Region'"></p>
+
+                    <!-- Generating State -->
+                    <div x-show="region.isLoading" class="text-xs text-emerald-600 flex items-center gap-2 py-2">
+                        <i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Generating alt text...
+                    </div>
+                    
+                    <!-- Content State -->
+                    <div x-show="!region.isLoading" class="space-y-3 mt-2">
+                        <div>
+                            <span class="text-[10px] font-bold uppercase text-slate-400">Short Alt</span>
+                            <textarea x-model="region.short_alt" rows="2" class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-slate-50 mt-1 focus:ring-emerald-500 focus:border-emerald-500 transition-colors"></textarea>
+                        </div>
+                        <div>
+                            <span class="text-[10px] font-bold uppercase text-slate-400">Long Alt</span>
+                            <textarea x-model="region.long_alt" rows="3" class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-slate-50 mt-1 focus:ring-emerald-500 focus:border-emerald-500 transition-colors"></textarea>
+                        </div>
+                        
+                        <!-- Crop Preview if available -->
+                        <div x-show="region.crop_png_b64" class="mt-2 bg-slate-100 p-2 rounded border border-slate-200 flex justify-center">
+                            <img :src="'data:image/png;base64,' + region.crop_png_b64" style="max-height: 120px; max-width: 100%; object-fit: contain;" class="rounded shadow-sm" alt="Region Crop">
+                        </div>
+
+                        <!-- Refine Block -->
+                        <div class="flex gap-2 items-center mt-2 border-t pt-3">
+                            <input type="text" x-model="region.refinePrompt" placeholder="Refinement prompt..." class="flex-1 text-xs px-2 py-1.5 border border-slate-200 rounded outline-none focus:border-emerald-500" @keydown.enter.prevent="refineRegion(region)">
+                            <button @click="refineRegion(region)" class="px-3 py-1.5 bg-slate-800 text-white rounded text-[10px] whitespace-nowrap hover:bg-slate-700 transition-colors flex items-center gap-1" :disabled="region.isRefining">
+                                <i x-show="region.isRefining" data-lucide="loader-2" class="w-3 h-3 animate-spin"></i>
+                                <span x-text="region.isRefining ? 'Refining...' : 'Refine'"></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </template>
+            <div x-show="regions.length === 0" class="text-center text-slate-500 text-sm mt-10">
+                Draw regions on the PDF to generate alt text.
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content: Continuous PDF Canvas -->
+    <div class="w-full md:w-2/3 bg-slate-200/50 rounded-2xl shadow-inner border border-slate-200 overflow-hidden flex flex-col relative" x-show="sessionId" x-cloak>
+        <!-- Toolbar -->
+        <div class="p-3 bg-white border-b border-slate-200 flex justify-between items-center shadow-sm z-10 shrink-0">
+            <div class="flex items-center gap-2">
+                <button @click="scrollToPage(currentPage - 1)" :disabled="currentPage <= 0" class="p-1.5 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-50 transition-colors" title="Previous Page"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
+                <span class="text-sm font-medium text-slate-700 flex items-center gap-1">
+                    Page 
+                    <input type="number" :value="currentPage + 1" @change="scrollToPage($event.target.value - 1)" class="w-12 text-center border border-slate-200 rounded p-0.5 focus:ring-emerald-500 focus:border-emerald-500 outline-none" min="1" :max="pageCount"> 
+                    of <span x-text="pageCount"></span>
+                </span>
+                <button @click="scrollToPage(currentPage + 1)" :disabled="currentPage >= pageCount - 1" class="p-1.5 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-50 transition-colors" title="Next Page"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
+            </div>
+            <div class="flex items-center gap-2">
+                <button @click="zoomOut()" class="p-1.5 rounded bg-slate-100 hover:bg-slate-200 transition-colors" title="Zoom Out"><i data-lucide="zoom-out" class="w-4 h-4"></i></button>
+                <span class="text-sm font-medium w-16 text-center" x-text="Math.round(scale * 100) + '%'"></span>
+                <button @click="zoomIn()" class="p-1.5 rounded bg-slate-100 hover:bg-slate-200 transition-colors" title="Zoom In"><i data-lucide="zoom-in" class="w-4 h-4"></i></button>
+            </div>
+        </div>
+
+        <!-- Scrollable Stacked Canvas Area -->
+        <div class="flex-1 overflow-auto p-4 flex flex-col items-center bg-slate-300 relative" x-ref="container" @scroll.passive="onScroll">
+            <div class="w-full max-w-full flex flex-col items-center">
+                <template x-for="(pageMeta, index) in pages" :key="index">
+                    <div class="relative shadow-xl bg-white mb-6 border border-slate-200" 
+                         :data-page="index" 
+                         :style="`width: ${pageMeta.width_pt * scale}px; height: ${pageMeta.height_pt * scale}px;`">
+                        
+                        <canvas :id="'canvas-' + index" class="pdf-canvas block w-full h-full"></canvas>
+                        
+                        <!-- Drawing Overlay -->
+                        <div class="absolute inset-0 z-20 cursor-crosshair" 
+                             @mousedown="startDraw($event, index)" 
+                             @mousemove="draw($event, index)" 
+                             @mouseup="endDraw($event, index)" 
+                             @mouseleave="endDraw($event, index)">
+                             
+                            <!-- Current Drawing Box -->
+                            <div x-show="isDrawing && drawingPage === index" 
+                                 class="absolute border-2 border-emerald-500 bg-emerald-500/20"
+                                 :style="`left: ${drawBox.x}px; top: ${drawBox.y}px; width: ${drawBox.w}px; height: ${drawBox.h}px;`">
+                            </div>
+
+                            <!-- Existing Regions -->
+                            <template x-for="r in getPageRegions(index)" :key="r.id">
+                                <div class="absolute border-2 transition-all cursor-pointer hover:bg-blue-500/10"
+                                     :class="selectedRegion && selectedRegion.id === r.id ? 'border-blue-500 bg-blue-500/20 z-30' : 'border-amber-500 hover:border-blue-400 z-10'"
+                                     :style="`left: ${r.x0_pct * 100}%; top: ${r.y0_pct * 100}%; width: ${(r.x1_pct - r.x0_pct) * 100}%; height: ${(r.y1_pct - r.y0_pct) * 100}%;`"
+                                     @click.stop="selectRegion(r)">
+                                     <div class="absolute -top-6 left-0 text-white text-[10px] px-1.5 py-0.5 rounded shadow whitespace-nowrap"
+                                          :class="selectedRegion && selectedRegion.id === r.id ? 'bg-blue-600' : 'bg-amber-500'"
+                                          x-text="'#' + r.id"></div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function markupApp() {
+    let pdfDoc = null;
+    let observer = null;
+    let renderedPages = new Set();
+    let renderingPages = new Set();
+    let pendingRenderQueue = new Set();
+
+    return {
+        sessionId: null,
+        pdfFilename: null,
+        isUploading: false,
+        isExporting: false,
+        pageCount: 0,
+        pages: [],
+        regions: [],
+        
+        scale: 1.5,
+        
+        isDrawing: false,
+        drawingPage: null,
+        startX: 0,
+        startY: 0,
+        drawBox: {x: 0, y: 0, w: 0, h: 0},
+        
+        regionCounter: 0,
+        selectedRegion: null,
+
+        get sortedRegions() {
+            // Sort by page first, then by vertical (Y) position on the page
+            return [...this.regions].sort((a, b) => {
+                if (a.page !== b.page) return a.page - b.page;
+                return a.y0_pct - b.y0_pct;
+            });
+        },
+
+        get canUndo() {
+            return this.regions.some(r => r.isUserDrawn);
+        },
+
+        undoLastRegion() {
+            for (let i = this.regions.length - 1; i >= 0; i--) {
+                if (this.regions[i].isUserDrawn) {
+                    this.deleteRegion(this.regions[i].id);
+                    break;
+                }
+            }
+        },
+
+        getPageRegions(pageIndex) {
+            return this.regions.filter(r => r.page === pageIndex);
+        },
+
+        refreshLucide() {
+            setTimeout(() => {
+                if(window.lucide) {
+                    lucide.createIcons();
+                }
+            }, 50);
+        },
+
+        async uploadPDF(e) {
+            const file = e.target.files[0];
+            if(!file) return;
+            this.isUploading = true;
+            this.pdfFilename = file.name;
+            
+            const fd = new FormData();
+            fd.append('file', file);
+            
+            try {
+                const res = await fetch('/api/markup/upload', {
+                    method: 'POST',
+                    body: fd
+                });
+                const data = await res.json();
+                if(data.error) throw new Error(data.error);
+                
+                this.sessionId = data.session_id;
+                this.pageCount = data.page_count;
+                this.pages = data.pages;
+                this.regions = (data.pre_regions || []).map(r => ({
+                    ...r, 
+                    short_alt: '', 
+                    long_alt: '', 
+                    crop_png_b64: null,
+                    isLoading: false, 
+                    isRefining: false, 
+                    refinePrompt: '',
+                    isUserDrawn: false
+                }));
+                this.regionCounter = Math.max(0, ...this.regions.map(r => r.id));
+                
+                await this.loadPDF();
+                
+                // Trigger auto-generate for pre-regions asynchronously
+                this.regions.forEach(r => this.generateRegionAltText(r));
+                this.refreshLucide();
+            } catch(err) {
+                alert("Upload failed: " + err.message);
+            } finally {
+                this.isUploading = false;
+            }
+        },
+
+        async loadPDF() {
+            const url = `/api/markup/pdf/${this.sessionId}`;
+            pdfDoc = await pdfjsLib.getDocument(url).promise;
+            
+            if (observer) {
+                observer.disconnect();
+            }
+            
+            observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    const pageIndex = parseInt(entry.target.dataset.page);
+                    if (entry.isIntersecting) {
+                        this.renderPageIfVisible(pageIndex, entry.target);
+                    }
+                });
+            }, { 
+                root: this.$refs.container, 
+                rootMargin: '800px 0px' 
+            });
+
+            // Start observing immediately after DOM updates
+            this.$nextTick(() => {
+                const containers = this.$refs.container.querySelectorAll('[data-page]');
+                containers.forEach(el => observer.observe(el));
+                
+                // Manual fallback for initial view
+                this.onScroll();
+            });
+        },
+
+        scrollToPage(index) {
+            index = parseInt(index);
+            if (isNaN(index) || index < 0 || index >= this.pageCount) return;
+            const container = this.$refs.container.querySelector(`[data-page="${index}"]`);
+            if (container) {
+                container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        },
+
+        onScroll() {
+            if (!pdfDoc) return;
+            const containers = this.$refs.container.querySelectorAll('[data-page]');
+            const containerRect = this.$refs.container.getBoundingClientRect();
+            
+            let closestPage = this.currentPage;
+            let minDistance = Infinity;
+
+            containers.forEach(el => {
+                const rect = el.getBoundingClientRect();
+                
+                // Lazy render check
+                if (rect.top < containerRect.bottom + 800 && rect.bottom > containerRect.top - 800) {
+                    const pageIndex = parseInt(el.dataset.page);
+                    this.renderPageIfVisible(pageIndex, el);
+                }
+
+                // Track which page is currently most visible in the center
+                const distance = Math.abs(rect.top - containerRect.top);
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    closestPage = parseInt(el.dataset.page);
+                }
+            });
+
+            // Update the page number in the top bar as you scroll
+            if (this.currentPage !== closestPage) {
+                this.currentPage = closestPage;
+            }
+        },
+
+        async renderPageIfVisible(pageIndex, containerEl) {
+            if (!pdfDoc || renderedPages.has(pageIndex) || renderingPages.has(pageIndex)) return;
+            renderingPages.add(pageIndex);
+            
+            try {
+                const page = await pdfDoc.getPage(pageIndex + 1);
+                const viewport = page.getViewport({ scale: this.scale });
+                
+                const canvas = containerEl.querySelector('canvas');
+                if (!canvas) return;
+                
+                const ctx = canvas.getContext('2d');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                
+                const renderContext = {
+                    canvasContext: ctx,
+                    viewport: viewport
+                };
+                
+                await page.render(renderContext).promise;
+                renderedPages.add(pageIndex);
+            } catch (err) {
+                if (err.name !== 'RenderingCancelledException') {
+                    console.error('Error rendering page:', err);
+                }
+            } finally {
+                renderingPages.delete(pageIndex);
+            }
+        },
+
+        changeScale(delta) {
+            this.scale += delta;
+            
+            // Clear all rendered statuses so they re-render on scroll
+            renderedPages.clear();
+            document.querySelectorAll('.pdf-canvas').forEach(c => {
+                const ctx = c.getContext('2d');
+                ctx.clearRect(0, 0, c.width, c.height);
+            });
+
+            // Force re-render of currently visible ones
+            this.$nextTick(() => {
+                const containers = this.$refs.container.querySelectorAll('[data-page]');
+                containers.forEach(el => {
+                    const rect = el.getBoundingClientRect();
+                    const containerRect = this.$refs.container.getBoundingClientRect();
+                    // If vertically in viewport roughly
+                    if (rect.top < containerRect.bottom + 800 && rect.bottom > containerRect.top - 800) {
+                        const pageIndex = parseInt(el.dataset.page);
+                        this.renderPageIfVisible(pageIndex, el);
+                    }
+                });
+            });
+        },
+
+        async zoomIn() {
+            if(this.scale < 3.0) {
+                this.changeScale(0.25);
+            }
+        },
+        
+        async zoomOut() {
+            if(this.scale > 0.5) {
+                this.changeScale(-0.25);
+            }
+        },
+
+        startDraw(e, pageIndex) {
+            if (e.button !== 0) return; // only left click
+            this.isDrawing = true;
+            this.drawingPage = pageIndex;
+            const rect = e.currentTarget.getBoundingClientRect();
+            this.startX = e.clientX - rect.left;
+            this.startY = e.clientY - rect.top;
+            this.drawBox = { x: this.startX, y: this.startY, w: 0, h: 0 };
+        },
+
+        draw(e, pageIndex) {
+            if (!this.isDrawing || this.drawingPage !== pageIndex) return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            const currentX = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+            const currentY = Math.max(0, Math.min(e.clientY - rect.top, rect.height));
+            
+            this.drawBox.x = Math.min(this.startX, currentX);
+            this.drawBox.y = Math.min(this.startY, currentY);
+            this.drawBox.w = Math.abs(currentX - this.startX);
+            this.drawBox.h = Math.abs(currentY - this.startY);
+        },
+
+        endDraw(e, pageIndex) {
+            if (!this.isDrawing || this.drawingPage !== pageIndex) return;
+            this.isDrawing = false;
+            this.drawingPage = null;
+            
+            if (this.drawBox.w > 10 && this.drawBox.h > 10) {
+                const rect = e.currentTarget.getBoundingClientRect();
+                this.regionCounter++;
+                const newRegion = {
+                    id: this.regionCounter,
+                    page: pageIndex,
+                    x0_pct: this.drawBox.x / rect.width,
+                    y0_pct: this.drawBox.y / rect.height,
+                    x1_pct: (this.drawBox.x + this.drawBox.w) / rect.width,
+                    y1_pct: (this.drawBox.y + this.drawBox.h) / rect.height,
+                    label: 'User Drawn Region',
+                    short_alt: '',
+                    long_alt: '',
+                    crop_png_b64: null,
+                    isLoading: true,
+                    isRefining: false,
+                    refinePrompt: '',
+                    isUserDrawn: true
+                };
+                this.regions.push(newRegion);
+                this.selectedRegion = newRegion;
+                this.refreshLucide();
+                
+                // Call API
+                this.generateRegionAltText(newRegion);
+            }
+            this.drawBox = {x: 0, y: 0, w: 0, h: 0};
+        },
+
+        deleteRegion(id) {
+            this.regions = this.regions.filter(r => r.id !== id);
+            if(this.selectedRegion && this.selectedRegion.id === id) {
+                this.selectedRegion = null;
+            }
+            this.refreshLucide();
+        },
+
+        selectRegion(region) {
+            this.selectedRegion = region;
+            
+            const container = this.$refs.container.querySelector(`[data-page="${region.page}"]`);
+            if (container) {
+                const rect = container.getBoundingClientRect();
+                const viewRect = this.$refs.container.getBoundingClientRect();
+                
+                // Scroll if fully or partially out of view
+                if (rect.top < viewRect.top || rect.bottom > viewRect.bottom) {
+                    container.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }
+        },
+
+        async generateRegionAltText(region) {
+            const target = this.regions.find(r => r.id === region.id);
+            if(!target) return;
+            
+            target.isLoading = true;
+            try {
+                const res = await fetch('/api/markup/generate_region', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        session_id: this.sessionId,
+                        region: {
+                            id: target.id,
+                            page: target.page,
+                            x0_pct: target.x0_pct,
+                            y0_pct: target.y0_pct,
+                            x1_pct: target.x1_pct,
+                            y1_pct: target.y1_pct,
+                            label: target.label
+                        }
+                    })
+                });
+                const data = await res.json();
+                if(data.error) throw new Error(data.error);
+                
+                // Merge data back
+                target.short_alt = data.result.short_alt;
+                target.long_alt = data.result.long_alt;
+                target.crop_png_b64 = data.result.crop_png_b64;
+                target.content_type = data.result.content_type;
+            } catch(err) {
+                console.error("Gen region error:", err);
+                target.short_alt = "Error generating alt text.";
+            } finally {
+                target.isLoading = false;
+                this.refreshLucide();
+            }
+        },
+
+        async refineRegion(region) {
+            if(!region.refinePrompt || region.isRefining) return;
+            
+            const target = this.regions.find(r => r.id === region.id);
+            if(!target) return;
+            
+            target.isRefining = true;
+            try {
+                const res = await fetch('/api/markup/refine_region', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        session_id: this.sessionId,
+                        region: {
+                            page: target.page,
+                            x0_pct: target.x0_pct,
+                            y0_pct: target.y0_pct,
+                            x1_pct: target.x1_pct,
+                            y1_pct: target.y1_pct
+                        },
+                        previous_short: target.short_alt,
+                        previous_long: target.long_alt,
+                        prompt: target.refinePrompt
+                    })
+                });
+                const data = await res.json();
+                if(data.error) throw new Error(data.error);
+                
+                target.short_alt = data.short_alt;
+                target.long_alt = data.long_alt;
+                target.refinePrompt = '';
+            } catch(err) {
+                console.error("Refine error:", err);
+                alert("Refinement failed: " + err.message);
+            } finally {
+                target.isRefining = false;
+                this.refreshLucide();
+            }
+        },
+
+        async exportData() {
+            if(!this.sessionId || this.regions.length === 0) return;
+            this.isExporting = true;
+            
+            try {
+                // Use sortedRegions so Excel output is also correctly ordered
+                const resultsPayload = this.sortedRegions.map(r => ({
+                    id: r.id,
+                    page: r.page,
+                    x0_pct: r.x0_pct,
+                    y0_pct: r.y0_pct,
+                    x1_pct: r.x1_pct,
+                    y1_pct: r.y1_pct,
+                    label: r.label,
+                    short_alt: r.short_alt,
+                    long_alt: r.long_alt,
+                    content_type: r.content_type,
+                    crop_png_b64: r.crop_png_b64
+                }));
+                
+                const res = await fetch('/api/markup/export', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        session_id: this.sessionId,
+                        pdf_filename: this.pdfFilename,
+                        results: resultsPayload
+                    })
+                });
+                const data = await res.json();
+                if(data.error) throw new Error(data.error);
+                
+                window.location.href = data.download_url;
+            } catch(err) {
+                alert("Export failed: " + err.message);
+            } finally {
+                this.isExporting = false;
+            }
+        }
+    }
+}
+</script>
+{% endblock %}

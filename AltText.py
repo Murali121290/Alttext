@@ -66,21 +66,17 @@ IS_SQLITE = False
 
 def get_db_connection():
     global DB_TYPE, IS_SQLITE
-    
-    # Try PostgreSQL first if configured
+
+    # Try PostgreSQL — single attempt with a short timeout to avoid blocking startup
     if DB_TYPE == "postgres":
-        for attempt in range(5):
-            try:
-                conn = psycopg2.connect(DATABASE_URL)
-                return conn
-            except psycopg2.OperationalError:
-                if attempt < 4:
-                    time.sleep(2)
-                    continue
-                print("\n[WARNING] PostgreSQL connection failed after retries (Docker not running?).")
-                print("[INFO] Falling back to local SQLite database (alttext.db).\n")
-                DB_TYPE = "sqlite"
-                IS_SQLITE = True
+        try:
+            conn = psycopg2.connect(DATABASE_URL, connect_timeout=3)
+            return conn
+        except psycopg2.OperationalError:
+            print("\n[WARNING] PostgreSQL connection failed (Docker not running?).")
+            print("[INFO] Falling back to local SQLite database (alttext.db).\n")
+            DB_TYPE = "sqlite"
+            IS_SQLITE = True
             
     # Fallback to SQLite
     conn = sqlite3.connect("alttext.db")
@@ -309,6 +305,20 @@ init_db()
 # ---------------- APP ----------------
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev_secret_key_change_in_prod") # vital for session
+
+# Enable template caching in production
+if not app.debug:
+    app.jinja_env.auto_reload = False
+    app.jinja_env.cache_size = 400
+
+# Add cache headers for static files to speed up repeat visits
+@app.after_request
+def add_cache_headers(response):
+    if request.path.startswith('/static/'):
+        # Cache static files for 1 hour
+        response.cache_control.max_age = 3600
+        response.cache_control.public = True
+    return response
 
 # ---------------- RATE LIMITING CONFIG ----------------
 limiter = Limiter(
@@ -702,6 +712,10 @@ def favicon():
 def files_page():
     files_data = []
     try:
+        # Get all completed jobs to map filenames to job IDs
+        completed_jobs = query_db("SELECT id, output_file FROM jobs WHERE status = 'completed' AND output_file IS NOT NULL")
+        file_to_job = {j['output_file']: j['id'] for j in completed_jobs}
+
         if os.path.exists(OUTPUT_FOLDER):
             for f in os.listdir(OUTPUT_FOLDER):
                 if not f.startswith('.'): # Ignore hidden files
@@ -711,7 +725,8 @@ def files_page():
                         'name': f,
                         'size': stats.st_size,
                         'mtime': datetime.datetime.fromtimestamp(stats.st_mtime),
-                        'is_xlsx': f.endswith('.xlsx')
+                        'is_xlsx': f.endswith('.xlsx'),
+                        'job_id': file_to_job.get(f)  # Attach the job ID if it exists
                     })
         # Sort by newest first
         files_data.sort(key=lambda x: x['mtime'], reverse=True)
@@ -1041,6 +1056,438 @@ def get_token_stats_route():
             "pricing": { "model": "gpt-4o" }
         }
     })
+
+# ============================================================
+# MARKUP TOOL — Additive new module.
+# Existing routes, logic, and database code are untouched.
+# ============================================================
+import uuid as _uuid
+
+MARKUP_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "markup_sessions")
+os.makedirs(MARKUP_FOLDER, exist_ok=True)
+
+
+@app.route("/markup")
+@login_required
+def markup_page():
+    return render_template("mark.html", title="Markup Tool", active_page="markup")
+
+
+@app.route("/api/markup/upload", methods=["POST"])
+@login_required
+def markup_upload():
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"error": "No file uploaded"}), 400
+    if not f.filename.lower().endswith(".pdf"):
+        return jsonify({"error": "Only PDF files are supported"}), 400
+
+    session_id = str(_uuid.uuid4())
+    session_dir = os.path.join(MARKUP_FOLDER, session_id)
+    os.makedirs(session_dir, exist_ok=True)
+
+    pdf_path = os.path.join(session_dir, "source.pdf")
+    f.save(pdf_path)
+
+    try:
+        doc = fitz.open(pdf_path)
+        page_count = len(doc)
+        pages_meta = []
+        # PDF.js renders pages client-side — no server-side PNG conversion needed
+        for i in range(len(doc)):
+            page = doc[i]
+            pages_meta.append({
+                "page": i,
+                "width_pt": page.rect.width,
+                "height_pt": page.rect.height,
+            })
+        # --- Detect existing PDF annotations and convert to pre-populated regions ---
+        _MARKUP_ANNOT_TYPES = {
+            0,   # Text (sticky note / comment)
+            2,   # FreeText (callout / text box)
+            4,   # Square / Rectangle
+            5,   # Circle
+            8,   # Highlight
+            9,   # Underline
+            10,  # Squiggly
+            11,  # StrikeOut
+            13,  # Stamp
+            15,  # Ink (freehand)
+            20,  # Polygon
+        }
+        pre_regions = []
+        annot_counter = 0
+        for i in range(len(doc)):
+            page = doc[i]
+            pw = page.rect.width
+            ph = page.rect.height
+            for annot in page.annots():
+                if annot.type[0] not in _MARKUP_ANNOT_TYPES:
+                    continue
+                r = annot.rect
+                # Skip degenerate / invisible rects (< 0.3 % of page in either dimension)
+                if pw == 0 or ph == 0:
+                    continue
+                if (r.width / pw) < 0.003 or (r.height / ph) < 0.003:
+                    continue
+                label = (annot.info.get("content") or annot.info.get("title") or "").strip()
+                annot_counter += 1
+                pre_regions.append({
+                    "id": annot_counter,
+                    "page": i,
+                    "x0_pct": r.x0 / pw,
+                    "y0_pct": r.y0 / ph,
+                    "x1_pct": r.x1 / pw,
+                    "y1_pct": r.y1 / ph,
+                    "label": label,
+                })
+
+        doc.close()
+    except Exception as e:
+        logger.error(f"Markup upload failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+    return jsonify({
+        "session_id": session_id,
+        "page_count": page_count,
+        "pages": pages_meta,
+        "pre_regions": pre_regions,
+    })
+
+
+@app.route("/api/markup/pdf/<session_id>")
+@login_required
+def markup_serve_pdf(session_id):
+    """Serve the raw PDF so PDF.js can render it client-side."""
+    if not re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', session_id):
+        return jsonify({"error": "Invalid session"}), 400
+    pdf_path = os.path.join(MARKUP_FOLDER, session_id, "source.pdf")
+    real_path = os.path.realpath(pdf_path)
+    if not real_path.startswith(os.path.realpath(MARKUP_FOLDER)):
+        return jsonify({"error": "Access denied"}), 403
+    if not os.path.exists(real_path):
+        return jsonify({"error": "Not found"}), 404
+    return send_file(real_path, mimetype="application/pdf")
+
+
+@app.route("/api/markup/generate", methods=["POST"])
+@login_required
+def markup_generate():
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+
+    session_id = data.get("session_id", "")
+    regions = data.get("regions", [])
+
+    if not re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', session_id):
+        return jsonify({"error": "Invalid session"}), 400
+    if not regions:
+        return jsonify({"error": "No regions provided"}), 400
+
+    pdf_path = os.path.join(MARKUP_FOLDER, session_id, "source.pdf")
+    real_pdf = os.path.realpath(pdf_path)
+    if not real_pdf.startswith(os.path.realpath(MARKUP_FOLDER)):
+        return jsonify({"error": "Access denied"}), 403
+    if not os.path.exists(real_pdf):
+        return jsonify({"error": "Session not found — please re-upload the PDF"}), 404
+
+    try:
+        from utils.markup_processor import process_markup_regions, write_markup_excel
+        results = process_markup_regions(real_pdf, regions)
+
+        pdf_filename = os.path.basename(real_pdf)
+        output_filename = f"markup_{session_id[:8]}.xlsx"
+        output_path = os.path.join(OUTPUT_FOLDER, output_filename)
+        write_markup_excel(results, output_path, pdf_filename=pdf_filename)
+
+        return jsonify({
+            "results": results,
+            "download_url": f"/download/{output_filename}"
+        })
+    except Exception as e:
+        logger.error(f"Markup generate failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+_UUID_RE = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+
+
+@app.route("/api/markup/generate_region", methods=["POST"])
+@login_required
+def markup_generate_region():
+    """Generate alt text for a single drawn region (called automatically on draw/resize/drag)."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+
+    session_id = data.get("session_id", "")
+    region = data.get("region", {})
+
+    if not re.match(_UUID_RE, session_id):
+        return jsonify({"error": "Invalid session"}), 400
+    if not region:
+        return jsonify({"error": "No region provided"}), 400
+
+    pdf_path = os.path.realpath(os.path.join(MARKUP_FOLDER, session_id, "source.pdf"))
+    if not pdf_path.startswith(os.path.realpath(MARKUP_FOLDER)):
+        return jsonify({"error": "Access denied"}), 403
+    if not os.path.exists(pdf_path):
+        return jsonify({"error": "Session not found — please re-upload the PDF"}), 404
+
+    try:
+        from utils.markup_processor import process_markup_regions
+        results = process_markup_regions(pdf_path, [region])
+        return jsonify({"result": results[0]})
+    except Exception as e:
+        logger.error(f"Markup generate_region failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/markup/export", methods=["POST"])
+@login_required
+def markup_export():
+    """Write the current frontend results to Excel and return a download URL."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+
+    session_id = data.get("session_id", "")
+    results = data.get("results", [])
+    pdf_filename = data.get("pdf_filename", "markup.pdf")
+
+    if not re.match(_UUID_RE, session_id):
+        return jsonify({"error": "Invalid session"}), 400
+    if not results:
+        return jsonify({"error": "No results to export"}), 400
+
+    try:
+        from utils.markup_processor import write_markup_excel
+        output_filename = f"markup_{session_id[:8]}.xlsx"
+        output_path = os.path.join(OUTPUT_FOLDER, output_filename)
+        write_markup_excel(results, output_path, pdf_filename=pdf_filename)
+        return jsonify({"download_url": f"/download/{output_filename}"})
+    except Exception as e:
+        logger.error(f"Markup export failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/markup/refine_region", methods=["POST"])
+@login_required
+def markup_refine_region():
+    """Refine existing alt text for a region based on a user instruction."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+
+    session_id = data.get("session_id", "")
+    region = data.get("region", {})
+    previous_short = data.get("previous_short", "")
+    previous_long = data.get("previous_long", "")
+    prompt = data.get("prompt", "").strip()
+
+    if not prompt:
+        return jsonify({"error": "Refine prompt is required"}), 400
+    if not re.match(_UUID_RE, session_id):
+        return jsonify({"error": "Invalid session"}), 400
+    if not region:
+        return jsonify({"error": "No region provided"}), 400
+
+    pdf_path = os.path.realpath(os.path.join(MARKUP_FOLDER, session_id, "source.pdf"))
+    if not pdf_path.startswith(os.path.realpath(MARKUP_FOLDER)):
+        return jsonify({"error": "Access denied"}), 403
+    if not os.path.exists(pdf_path):
+        return jsonify({"error": "Session not found — please re-upload the PDF"}), 404
+
+    try:
+        from utils.markup_processor import crop_region_to_png, refine_markup_region
+        png_bytes = crop_region_to_png(
+            pdf_path,
+            int(region["page"]),
+            float(region["x0_pct"]), float(region["y0_pct"]),
+            float(region["x1_pct"]), float(region["y1_pct"]),
+        )
+        result = refine_markup_region(png_bytes, previous_short, previous_long, prompt)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Markup refine_region failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+
+# ---------------- REVIEW TOOL ROUTES ----------------
+
+@app.route("/review/<int:job_id>")
+@login_required
+def review_page(job_id):
+    job = query_db("SELECT * FROM jobs WHERE id = %s", (job_id,), one=True)
+    if not job:
+        flash("Job not found", "error")
+        return flask_redirect("/batches")
+        
+    return render_template("review.html", title="Review Tool", active_page="batches", job_id=job_id, pdf_filename=job['filename'])
+
+import base64
+import openpyxl
+
+@app.route("/api/job/<int:job_id>/data", methods=["GET"])
+@login_required
+def get_job_review_data(job_id):
+    job = query_db("SELECT * FROM jobs WHERE id = %s", (job_id,), one=True)
+    if not job or not job['output_file']:
+        return jsonify({"error": "Job not found or no output file"}), 404
+
+    excel_path = os.path.join(OUTPUT_FOLDER, job['output_file'])
+    if not os.path.exists(excel_path):
+        return jsonify({"error": "Output file not found"}), 404
+
+    try:
+        wb = openpyxl.load_workbook(excel_path, data_only=False)
+        ws = wb.active
+        
+        images_by_row = {}
+        if hasattr(ws, '_images'):
+            for img in ws._images:
+                if hasattr(img, 'anchor') and hasattr(img.anchor, '_from'):
+                    row_idx = img.anchor._from.row
+                    # Extract bytes
+                    try:
+                        img_bytes = img._data()
+                        if callable(img_bytes):
+                            img_bytes = img_bytes()
+                        images_by_row[row_idx + 1] = base64.b64encode(img_bytes).decode('utf-8')
+                    except Exception as e:
+                        logger.error(f"Failed to read image on row {row_idx+1}: {e}")
+
+        results = []
+        id_counter = 1
+        for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+            if not row[0]: continue
+            
+            try:
+                page_val = int(row[2]) - 1
+            except:
+                page_val = 0
+                
+            results.append({
+                "id": id_counter,
+                "page": page_val,
+                "label": str(row[1]) if row[1] else f"Figure {id_counter}",
+                "short_alt": str(row[4]) if row[4] else "",
+                "long_alt": str(row[5]) if row[5] else "",
+                "content_type": str(row[8]) if len(row) > 8 and row[8] else "unknown",
+                "domain": str(row[9]) if len(row) > 9 and row[9] else "Education",
+                "crop_png_b64": images_by_row.get(row_idx, None),
+                "isUserDrawn": False
+            })
+            id_counter += 1
+            
+        return jsonify({
+            "job_id": job_id,
+            "pdf_filename": job['filename'],
+            "results": results
+        })
+    except Exception as e:
+        logger.error(f"Error parsing job data: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/job/<int:job_id>/pdf", methods=["GET"])
+@login_required
+def serve_job_pdf(job_id):
+    job = query_db("SELECT * FROM jobs WHERE id = %s", (job_id,), one=True)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+        
+    pdf_path = os.path.join(UPLOAD_FOLDER, job['filename'])
+    if not os.path.exists(pdf_path):
+        return jsonify({"error": "PDF not found"}), 404
+        
+    return send_file(pdf_path, mimetype="application/pdf")
+
+@app.route("/api/job/<int:job_id>/update", methods=["POST"])
+@login_required
+def update_job_review_data(job_id):
+    data = request.get_json()
+    results = data.get("results", [])
+    
+    job = query_db("SELECT * FROM jobs WHERE id = %s", (job_id,), one=True)
+    if not job or not job['output_file']:
+        return jsonify({"error": "Job not found"}), 404
+        
+    output_path = os.path.join(OUTPUT_FOLDER, job['output_file'])
+    pdf_filename = job['filename']
+    
+    try:
+        from utils.markup_processor import write_markup_excel
+        write_markup_excel(results, output_path, pdf_filename=pdf_filename)
+        return jsonify({"success": True, "download_url": f"/download/{job['output_file']}"})
+    except Exception as e:
+        logger.error(f"Failed to save reviewed Excel for job {job_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+
+@app.route("/api/job/<int:job_id>/generate_region", methods=["POST"])
+@login_required
+def job_generate_region(job_id):
+    data = request.get_json()
+    if not data or "region" not in data:
+        return jsonify({"error": "No region provided"}), 400
+
+    region = data.get("region", {})
+    job = query_db("SELECT * FROM jobs WHERE id = %s", (job_id,), one=True)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+
+    pdf_path = os.path.join(UPLOAD_FOLDER, job['filename'])
+    if not os.path.exists(pdf_path):
+        return jsonify({"error": "PDF not found"}), 404
+
+    try:
+        from utils.markup_processor import process_markup_regions
+        results = process_markup_regions(pdf_path, [region])
+        return jsonify({"result": results[0]})
+    except Exception as e:
+        logger.error(f"Job {job_id} generate_region failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/job/<int:job_id>/refine_region", methods=["POST"])
+@login_required
+def job_refine_region(job_id):
+    data = request.get_json()
+    if not data or "region" not in data:
+        return jsonify({"error": "No region provided"}), 400
+
+    region = data.get("region", {})
+    previous_short = data.get("previous_short", "")
+    previous_long = data.get("previous_long", "")
+    prompt = data.get("prompt", "").strip()
+
+    if not prompt:
+        return jsonify({"error": "Refine prompt is required"}), 400
+
+    job = query_db("SELECT * FROM jobs WHERE id = %s", (job_id,), one=True)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+
+    pdf_path = os.path.join(UPLOAD_FOLDER, job['filename'])
+    if not os.path.exists(pdf_path):
+        return jsonify({"error": "PDF not found"}), 404
+
+    try:
+        from utils.markup_processor import crop_region_to_png, refine_markup_region
+        png_bytes = crop_region_to_png(
+            pdf_path,
+            int(region["page"]),
+            float(region["x0_pct"]), float(region["y0_pct"]),
+            float(region["x1_pct"]), float(region["y1_pct"]),
+        )
+        result = refine_markup_region(png_bytes, previous_short, previous_long, prompt)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Job {job_id} refine_region failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
 
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', use_reloader=False)

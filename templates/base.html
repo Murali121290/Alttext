@@ -9,8 +9,8 @@
     <link rel="stylesheet" href="/static/css/style.css">
 
     <!-- Scripts (Defer) -->
-    <script defer src="/static/js/lucide.min.js"></script>
     <script defer src="/static/js/alpine.min.js"></script>
+    <script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 
     <style>
         :root {
@@ -98,31 +98,39 @@
                 </a>
 
                 <a href="/upload"
-                    class="flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 {{ 'bg-gradient-to-r from-amber-500/20 to-orange-500/10 text-amber-400 shadow-lg shadow-amber-500/5' if active_page == 'upload' else 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200' }}">
+                    class="flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 {{ 'bg-gradient-to-r from-amber-500/20 to-orange-500/10 text-amber-600 shadow-lg shadow-amber-500/5' if active_page == 'upload' else 'text-slate-700 hover:bg-slate-100 hover:text-slate-900' }}">
                     <i data-lucide="upload"
-                        class="h-5 w-5 {{ 'text-amber-400' if active_page == 'upload' else '' }}"></i>
+                        class="h-5 w-5 {{ 'text-amber-600' if active_page == 'upload' else 'text-slate-600' }}"></i>
                     <span>Process Figures</span>
                 </a>
 
                 <a href="/files"
-                    class="flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 {{ 'bg-gradient-to-r from-amber-500/20 to-orange-500/10 text-amber-400 shadow-lg shadow-amber-500/5' if active_page == 'files' else 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200' }}">
+                    class="flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 {{ 'bg-gradient-to-r from-amber-500/20 to-orange-500/10 text-amber-600 shadow-lg shadow-amber-500/5' if active_page == 'files' else 'text-slate-700 hover:bg-slate-100 hover:text-slate-900' }}">
                     <i data-lucide="folder"
-                        class="h-5 w-5 {{ 'text-amber-400' if active_page == 'files' else '' }}"></i>
+                        class="h-5 w-5 {{ 'text-amber-600' if active_page == 'files' else 'text-slate-600' }}"></i>
                     <span>Downloads</span>
                 </a>
 
                 <!-- Placeholder links -->
                 <a href="/batches"
-                    class="flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 {{ 'bg-gradient-to-r from-amber-500/20 to-orange-500/10 text-amber-400 shadow-lg shadow-amber-500/5' if active_page == 'batches' else 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200' }}">
+                    class="flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 {{ 'bg-gradient-to-r from-amber-500/20 to-orange-500/10 text-amber-600 shadow-lg shadow-amber-500/5' if active_page == 'batches' else 'text-slate-700 hover:bg-slate-100 hover:text-slate-900' }}">
                     <i data-lucide="folder-open"
-                        class="h-5 w-5 {{ 'text-amber-400' if active_page == 'batches' else '' }}"></i>
+                        class="h-5 w-5 {{ 'text-amber-600' if active_page == 'batches' else 'text-slate-600' }}"></i>
                     <span>Batches</span>
                 </a>
 
+                <a href="/markup"
+                    class="flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 {{ 'bg-gradient-to-r from-amber-500/20 to-orange-500/10 text-amber-600 shadow-lg shadow-amber-500/5' if active_page == 'markup' else 'text-slate-700 hover:bg-slate-100 hover:text-slate-900' }}">
+                    <i data-lucide="crop"
+                        class="h-5 w-5 {{ 'text-amber-600' if active_page == 'markup' else 'text-slate-600' }}"></i>
+                    <span>Markup Tool</span>
+                </a>
+
                 <a href="#"
-                    class="flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 text-slate-400 hover:bg-slate-800/50 hover:text-slate-200">
-                    <i data-lucide="bar-chart-3" class="h-5 w-5"></i>
+                    class="flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 text-slate-500 hover:bg-slate-100 hover:text-slate-900 opacity-50 cursor-not-allowed">
+                    <i data-lucide="bar-chart-3" class="h-5 w-5 text-slate-500"></i>
                     <span>Analytics</span>
+                    <span class="ml-auto text-xs bg-slate-200 text-slate-600 px-2 py-0.5 rounded">Coming Soon</span>
                 </a>
 
                 {% if current_user.is_authenticated and current_user.role == 'admin' %}
@@ -247,15 +255,37 @@
         document.addEventListener('alpine:init', () => {
             Alpine.data('queueStatus', () => ({
                 stats: { pending: 0, processing: 0 },
+                pollInterval: null,
                 init() {
                     this.fetchStats();
-                    setInterval(() => this.fetchStats(), 5000);
+                    // Only poll if actively processing
+                    this.startPolling();
+                },
+                startPolling() {
+                    if (this.pollInterval) return;
+                    this.pollInterval = setInterval(() => {
+                        this.fetchStats();
+                        // Stop polling if nothing is processing
+                        if (!this.stats.is_processing && this.stats.pending === 0) {
+                            this.stopPolling();
+                        }
+                    }, 10000); // Reduced frequency: every 10 seconds instead of 5
+                },
+                stopPolling() {
+                    if (this.pollInterval) {
+                        clearInterval(this.pollInterval);
+                        this.pollInterval = null;
+                    }
                 },
                 async fetchStats() {
                     try {
-                        const response = await fetch('/api/queue/status');
+                        const response = await fetch('/api/queue/status', { credentials: 'same-origin' });
                         if (response.ok) {
                             this.stats = await response.json();
+                            // Resume polling if work started
+                            if ((this.stats.is_processing || this.stats.pending > 0) && !this.pollInterval) {
+                                this.startPolling();
+                            }
                         }
                     } catch (e) {
                         console.error("Failed to fetch stats", e);
@@ -264,12 +294,34 @@
             }))
         });
 
-        // Initialize Lucide icons
+        // Initialize Lucide icons once scripts have loaded
         document.addEventListener("DOMContentLoaded", () => {
-            if (window.lucide) {
-                lucide.createIcons();
+            if (window.lucide) lucide.createIcons();
+        });
+        // Fallback: if lucide loads after DOMContentLoaded (CDN defer)
+        window.addEventListener('load', () => {
+            if (window.lucide) lucide.createIcons();
+        });
+
+        // Re-run createIcons when Alpine x-if injects new [data-lucide] nodes.
+        // Debounced to prevent an infinite loop: lucide replaces <i data-lucide>
+        // with <svg>, which itself triggers the observer, which would call
+        // createIcons() again endlessly without the debounce.
+        let _lucideTimer = null;
+        const _lucideObserver = new MutationObserver((mutations) => {
+            if (!window.lucide) return;
+            const hasNew = mutations.some(m =>
+                [...m.addedNodes].some(n =>
+                    n.nodeType === 1 &&
+                    (n.hasAttribute?.('data-lucide') || n.querySelector?.('[data-lucide]'))
+                )
+            );
+            if (hasNew) {
+                clearTimeout(_lucideTimer);
+                _lucideTimer = setTimeout(() => lucide.createIcons(), 50);
             }
         });
+        _lucideObserver.observe(document.body, { subtree: true, childList: true });
     </script>
     {% block scripts %}{% endblock %}
 </body>

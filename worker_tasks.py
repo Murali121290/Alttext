@@ -233,7 +233,12 @@ Please provide an improved version that strictly follows these rules:
 7. NO SURROUNDING TEXT BLEED: Describe ONLY the image element. Do NOT reproduce or paraphrase surrounding page body text.
 8. NAME PUBLIC FIGURES: Verifiable well-known public figures (e.g., presidents, celebrities) must be explicitly named, not described generically.
 9. SUMMARIZE TEXT-HEAVY CONTENT: Never reproduce body-text paragraphs, bullet lists, or worked examples verbatim. Summarize text-heavy content.
-10. NO LEADING ARTICLE: Do NOT start alt text with "A", "An", or "The". Begin directly with the subject or action word.
+10. NO LEADING ARTICLE, GRAMMAR & SPELLING:
+    - Do NOT start alt text with "A", "An", or "The". Begin directly with the subject or action word.
+    - Within sentences, use grammatically complete English: include required articles (a, an, the) before singular countable nouns, and required prepositions where omitted (e.g., "sits mat" → "sits on a mat").
+    - PREPOSITION FIX — "of" is required after: "photograph", "close-up", "macro photograph", "profile", "view", "series". WRONG: "Macro photograph a single egg." RIGHT: "Macro photograph of a single egg."
+    - VERB FIX — Every sentence must have a verb. WRONG: "This image the egg-laying stage." RIGHT: "This image shows the egg-laying stage." For panel labels: WRONG: "Panel A a 2-mm caterpillar." RIGHT: "Panel A shows a 2-mm caterpillar."
+    - Fix all misspelled words. Every sentence must be grammatically correct and complete.
 """
     rules_path = os.path.join(os.path.dirname(__file__), 'utils', 'alt_text_rules.json')
     rules_loaded = False
@@ -955,6 +960,45 @@ def clean_alt_text(text):
     # Strip any leading "A ", "An ", or "The " — alt text should begin directly
     # with the subject or action word, not an article.
     text = re.sub(r'^(?:a|an|the)\s+', '', text, flags=re.IGNORECASE)
+
+    # Fix missing "of" after close-up/photograph/macro/profile/view/series
+    # when immediately followed by an article or numeral (not already "of").
+    # e.g. "Close-up a tiny egg" → "Close-up of a tiny egg"
+    #      "Macro photograph a single cell" → "Macro photograph of a single cell"
+    text = re.sub(
+        r'\b(close-up|close up|macro photograph|macro photo|macro|photograph|profile|view|series)\s+(?!of\b|photo|photograph)(?=a\b|an\b|the\b|\d)',
+        lambda m: m.group(1) + ' of ',
+        text,
+        flags=re.IGNORECASE
+    )
+
+    # Fix "This image/photograph/diagram/figure/photo <noun>" — missing verb "shows"
+    # e.g. "This image the egg-laying stage" → "This image shows the egg-laying stage"
+    text = re.sub(
+        r'\b(This (?:image|photograph|diagram|figure|photo))\s+(?=a\b|an\b|the\b)',
+        lambda m: m.group(1) + ' shows ',
+        text,
+        flags=re.IGNORECASE
+    )
+
+    # Fix "Panel A/B/C/D <noun>" — missing verb "shows"
+    # e.g. "Panel A a 2-mm caterpillar" → "Panel A shows a 2-mm caterpillar"
+    text = re.sub(
+        r'\b(Panel [A-D])\s+(?=a\b|an\b|the\b|\d)',
+        lambda m: m.group(1) + ' shows ',
+        text,
+        flags=re.IGNORECASE
+    )
+
+    # Fix "labeled A through D, the/a/an <noun>" — missing participle "showing"
+    # e.g. "labeled A through D, the growth of" → "labeled A through D, showing the growth of"
+    text = re.sub(
+        r'(labeled [A-D] through [A-D]),\s+(?=a\b|an\b|the\b)',
+        lambda m: m.group(1) + ', showing ',
+        text,
+        flags=re.IGNORECASE
+    )
+
     if text and text[0].islower():
         text = text[0].upper() + text[1:]
 
@@ -994,6 +1038,27 @@ def render_pages(doc):
 
     logger.info(f"Rendered {len(pages_data)}/{total_pages} pages with visual content")
     return pages_data
+
+
+def _normalize_figure_number(value):
+    """Ensure figure_number is always in 'Figure X' format.
+    Handles: '1', '1.2', 'Figure 1', 'Fig. 2', '', None.
+    """
+    if not value:
+        return "Figure 1"
+    s = str(value).strip()
+    # Already correctly formatted
+    if re.match(r'^Figure\s+\S', s, re.IGNORECASE):
+        return re.sub(r'^figure\s+', 'Figure ', s, flags=re.IGNORECASE)
+    # 'Fig. X' or 'Fig X'
+    s = re.sub(r'^Fig\.?\s+', 'Figure ', s, flags=re.IGNORECASE)
+    if s.startswith('Figure '):
+        return s
+    # Plain number or decimal like '1' or '1.2'
+    if re.match(r'^[\d.]+$', s):
+        return f"Figure {s}"
+    # Fallback: prepend Figure
+    return f"Figure {s}"
 
 
 def process_single_image(img_data, absolute_page_num, run_qc=False, retry_attempt=0):
@@ -1096,7 +1161,7 @@ SELF-CHECK: After writing your alt text, verify you captured 100% of the instruc
             for item in data:
                 items.append({
                     "page": absolute_page_num,
-                    "figure_number": item.get("figure_number", "Unknown"),
+                    "figure_number": _normalize_figure_number(item.get("figure_number", "")),
                     "Image": item.get("Image", []),
                     "short_alt": item.get("short_alt", ""),
                     "long_alt": item.get("long_alt", ""),

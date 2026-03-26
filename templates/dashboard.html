@@ -356,21 +356,37 @@
             stats: null,
             tokens: null,
             batches: [],
+            pollInterval: null,
             init() {
                 this.refresh();
-                setInterval(() => this.refresh(), 5000);
+                this.startSmartPolling();
+            },
+            startSmartPolling() {
+                if (this.pollInterval) return;
+                this.pollInterval = setInterval(() => {
+                    this.refresh();
+                    // Stop polling if nothing is active
+                    if (this.stats && !this.stats.is_processing && this.stats.pending === 0) {
+                        clearInterval(this.pollInterval);
+                        this.pollInterval = null;
+                    }
+                }, 15000); // Poll every 15 seconds instead of 5 (slower)
             },
             async refresh() {
                 try {
                     const [qRes, tRes, bRes] = await Promise.all([
-                        fetch('/api/queue/status'),
-                        fetch('/api/tokens/stats'),
-                        fetch('/api/batches?limit=5')
+                        fetch('/api/queue/status', { credentials: 'same-origin' }),
+                        fetch('/api/tokens/stats', { credentials: 'same-origin' }),
+                        fetch('/api/batches?limit=5', { credentials: 'same-origin' })
                     ]);
                     this.stats = await qRes.json();
                     this.tokens = await tRes.json();
                     const batchData = await bRes.json();
                     this.batches = batchData.batches;
+                    // Resume polling if work started
+                    if (this.stats && (this.stats.is_processing || this.stats.pending > 0) && !this.pollInterval) {
+                        this.startSmartPolling();
+                    }
                 } catch (e) { console.error(e); }
             },
             formatNumber(num) {
