@@ -373,3 +373,53 @@ def write_markup_excel(results: list, output_path: str, pdf_filename: str = "") 
             os.unlink(_tmp)
         except Exception:
             pass
+
+
+def update_review_excel(results: list, excel_path: str) -> None:
+    """
+    Update short_alt and long_alt in an existing batch-output Excel in-place.
+    Pre-existing rows (id <= data row count) are updated by row index.
+    New user-drawn rows are appended.
+    """
+    from openpyxl import load_workbook
+
+    wb = load_workbook(excel_path)
+    ws = wb.active
+
+    # Row 1 is the header — data starts at row 2
+    max_data_row = ws.max_row - 1  # number of data rows
+
+    # Short alt = col E (index 5), Long alt = col F (index 6)
+    SHORT_COL = 5
+    LONG_COL = 6
+
+    for result in results:
+        region_id = int(result.get("id", 0))
+        raw_short = _clean_alt_text(_apply_json_rules(result.get("short_alt", "")))
+        raw_long = _clean_alt_text(_apply_json_rules(result.get("long_alt", "")))
+
+        if region_id <= max_data_row:
+            # Update existing row in-place
+            excel_row = region_id + 1  # region id=1 → Excel row 2
+            ws.cell(row=excel_row, column=SHORT_COL).value = raw_short
+            ws.cell(row=excel_row, column=LONG_COL).value = raw_long
+        else:
+            # New user-drawn region — append as new row
+            page_1based = int(result.get("page", 0)) + 1
+            label = result.get("label", "").strip() or f"Figure {region_id}"
+            word_count = len(raw_long.split()) if raw_long else 0
+            category = "Simple" if word_count < 25 else ("Moderate" if word_count < 150 else "Complex")
+            ws.append([
+                "",          # File name
+                label,       # Figure number
+                page_1based, # Page number
+                "",          # Image
+                raw_short,   # Short alt text
+                raw_long,    # Long alt text
+                word_count,  # Word Count
+                category,    # Category
+                result.get("content_type", "General"),
+                result.get("domain", "General"),
+            ])
+
+    wb.save(excel_path)

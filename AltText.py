@@ -1421,8 +1421,8 @@ def update_job_review_data(job_id):
     pdf_filename = job['filename']
     
     try:
-        from utils.markup_processor import write_markup_excel
-        write_markup_excel(results, output_path, pdf_filename=pdf_filename)
+        from utils.markup_processor import update_review_excel
+        update_review_excel(results, output_path)
         return jsonify({"success": True, "download_url": f"/download/{job['output_file']}"})
     except Exception as e:
         logger.error(f"Failed to save reviewed Excel for job {job_id}: {e}")
