@@ -58,8 +58,11 @@
                         <div class="min-w-0">
                             <p class="font-medium text-slate-800 text-sm truncate" x-text="job.filename"></p>
                             <p class="text-xs text-slate-400" x-text="'ID: ' + job.job_id"></p>
-                            <p x-show="job.error_message" class="text-xs text-red-500 mt-1 truncate"
-                                x-text="job.error_message"></p>
+                            <div x-show="job.status === 'failed' && job.error_message"
+                                class="mt-1.5 flex items-start gap-1.5 text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-2 py-1.5">
+                                <i data-lucide="alert-triangle" class="w-3.5 h-3.5 flex-shrink-0 mt-px"></i>
+                                <span x-text="job.error_message"></span>
+                            </div>
                         </div>
                     </div>
 
@@ -103,6 +106,12 @@
                         </template>
                         <template x-if="job.status === 'processing'">
                             <span class="text-xs text-amber-600 animate-pulse">Processing...</span>
+                        </template>
+                        <template x-if="job.status === 'failed'">
+                            <div class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-50 text-red-700 border border-red-200 text-xs font-medium">
+                                <i data-lucide="alert-triangle" class="w-3.5 h-3.5 pointer-events-none"></i>
+                                Contact Administrator
+                            </div>
                         </template>
                     </div>
                 </div>

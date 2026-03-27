@@ -20,6 +20,7 @@ import google.genai as genai
 from utils.prompt_assets import SYSTEM_PROMPT
 from dotenv import load_dotenv
 import logging
+import logging.handlers
 try:
     import pandas as pd
     _PANDAS_AVAILABLE = True
@@ -34,13 +35,13 @@ except ImportError:
 # ---------------- LOGGING CONFIG ----------------
 _stream_handler = logging.StreamHandler()
 _stream_handler.stream = open(_stream_handler.stream.fileno(), mode='w', encoding='utf-8', buffering=1)
+_wfile_handler = logging.handlers.RotatingFileHandler(
+    "alttext_worker.log", maxBytes=10 * 1024 * 1024, backupCount=5, encoding='utf-8'
+)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(process)d - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("alttext_worker.log", encoding='utf-8'),
-        _stream_handler
-    ]
+    handlers=[_wfile_handler, _stream_handler]
 )
 logger = logging.getLogger(__name__)
 
@@ -1248,6 +1249,24 @@ def calculate_cost(input_tokens, output_tokens):
     return cost_in + cost_out
 
 
+def _classify_error(exc: Exception) -> str:
+    """
+    Translate a raw exception into a user-facing message that hides
+    internal details (API keys, stack traces, token counts).
+    The full technical error is always written to the server log first.
+    """
+    raw = str(exc).lower()
+    if any(k in raw for k in ("api_key", "api key", "invalid key", "invalid api", "401", "403", "unauthenticated", "permission denied", "credentials")):
+        return "Invalid API credentials. Please contact your administrator."
+    if any(k in raw for k in ("quota", "429", "resource_exhausted", "rate limit", "rate_limit", "too many requests")):
+        return "API quota or rate limit exceeded. Please contact your administrator."
+    if any(k in raw for k in ("token", "context length", "too long", "max_tokens", "prompt is too long")):
+        return "File is too large to process (token limit exceeded). Please contact your administrator."
+    if any(k in raw for k in ("timeout", "timed out", "deadline", "connection", "network", "503", "502")):
+        return "Processing timed out or a network error occurred. Please contact your administrator."
+    return "Processing failed unexpectedly. Please contact your administrator."
+
+
 def _cleanup_extracted_images(img_dir: str, job_id: int) -> None:
     """Remove all files from the extracted_images staging folder.
 
@@ -1312,9 +1331,9 @@ def run_batch_processing(batch_id, files_info, run_gemini=True, run_gpt=False):
                         WHERE id = %s
                     """, (out_name, gpt_in, gpt_out, gpt_cost, job_id), commit=True, conn=conn)
                 except Exception as e:
-                    logger.error(f"Job {job_id} (Excel validation) failed: {e}")
+                    logger.error(f"Job {job_id} (Excel validation) failed: {e}", exc_info=True)
                     query_db("UPDATE jobs SET status = 'failed', error_msg = %s WHERE id = %s",
-                             (str(e)[:500], job_id), commit=True, conn=conn)
+                             (_classify_error(e), job_id), commit=True, conn=conn)
                 continue
 
             if not run_gemini:
@@ -1482,9 +1501,9 @@ def run_batch_processing(batch_id, files_info, run_gemini=True, run_gpt=False):
                             WHERE id = %s
                         """, (gpt_out_name, gpt_in, gpt_out, gpt_cost, job_id), commit=True, conn=conn)
                     except Exception as gpt_e:
-                        logger.error(f"Job {job_id} (Chained GPT Validation) failed: {gpt_e}")
+                        logger.error(f"Job {job_id} (Chained GPT Validation) failed: {gpt_e}", exc_info=True)
                         query_db("UPDATE jobs SET error_msg = %s WHERE id = %s",
-                                 (f"Gemini OK. GPT Failed: {str(gpt_e)[:400]}", job_id), commit=True, conn=conn)
+                                 (_classify_error(gpt_e), job_id), commit=True, conn=conn)
 
                 # FIX 1 — Cleanup deferred to here, after GPT chaining completes.
                 # In the original code, cleanup ran before the GPT chain, which was fragile.
@@ -1493,12 +1512,11 @@ def run_batch_processing(batch_id, files_info, run_gemini=True, run_gpt=False):
                 _cleanup_extracted_images(img_dir, job_id)
 
             except Exception as e:
-                logger.error(f"Job {job_id} failed: {e}")
+                logger.error(f"Job {job_id} failed: {e}", exc_info=True)
                 if doc:
                     doc.close()
-                error_msg = str(e)[:500]
                 query_db("UPDATE jobs SET status = 'failed', error_msg = %s WHERE id = %s",
-                        (error_msg, job_id), commit=True, conn=conn)
+                        (_classify_error(e), job_id), commit=True, conn=conn)
 
         query_db("UPDATE batches SET status = 'completed' WHERE id = %s", (batch_id,), commit=True, conn=conn)
 

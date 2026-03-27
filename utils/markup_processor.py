@@ -84,6 +84,12 @@ def crop_region_to_png(pdf_path: str, page_num: int,
     Coordinates are fractions of page width/height (0.0 – 1.0).
     Rendered at 2x scale for quality.
     """
+    for name, val in [("x0_pct", x0_pct), ("y0_pct", y0_pct), ("x1_pct", x1_pct), ("y1_pct", y1_pct)]:
+        if not (0.0 <= val <= 1.0):
+            raise ValueError(f"Coordinate {name}={val} is out of range [0.0, 1.0]")
+    if x0_pct >= x1_pct or y0_pct >= y1_pct:
+        raise ValueError(f"Invalid crop rect: ({x0_pct},{y0_pct}) → ({x1_pct},{y1_pct})")
+
     doc = fitz.open(pdf_path)
     try:
         page = doc[page_num]
@@ -365,14 +371,14 @@ def write_markup_excel(results: list, output_path: str, pdf_filename: str = "") 
             except Exception as e:
                 logger.warning(f"Markup Excel: could not embed thumbnail row {row_idx}: {e}")
 
-    wb.save(output_path)
-
-    # Clean up temp PNG files now that the workbook has been written
-    for _tmp in _tmp_paths:
-        try:
-            os.unlink(_tmp)
-        except Exception:
-            pass
+    try:
+        wb.save(output_path)
+    finally:
+        for _tmp in _tmp_paths:
+            try:
+                os.unlink(_tmp)
+            except Exception:
+                pass
 
 
 def _embed_crop_image(ws, crop_b64: str, excel_row: int, col_letter: str = "D") -> str | None:
@@ -501,10 +507,11 @@ def update_review_excel(results: list, excel_path: str) -> None:
             except Exception as e:
                 logger.warning(f"Review Excel: could not embed thumbnail row {row_idx}: {e}")
 
-    wb.save(excel_path)
-
-    for _tmp in _tmp_paths:
-        try:
-            os.unlink(_tmp)
-        except Exception:
-            pass
+    try:
+        wb.save(excel_path)
+    finally:
+        for _tmp in _tmp_paths:
+            try:
+                os.unlink(_tmp)
+            except Exception:
+                pass

@@ -19,6 +19,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from functools import wraps
 import logging
+import logging.handlers
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from utils.security import PasswordValidator, FileValidator, sanitize_filename, check_default_credentials
@@ -26,13 +27,13 @@ from utils.security import PasswordValidator, FileValidator, sanitize_filename, 
 # ---------------- LOGGING CONFIG ----------------
 _stream_handler = logging.StreamHandler()
 _stream_handler.stream = open(_stream_handler.stream.fileno(), mode='w', encoding='utf-8', buffering=1)
+_file_handler = logging.handlers.RotatingFileHandler(
+    "alttext_processing.log", maxBytes=10 * 1024 * 1024, backupCount=5, encoding='utf-8'
+)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("alttext_processing.log", encoding='utf-8'),
-        _stream_handler
-    ]
+    handlers=[_file_handler, _stream_handler]
 )
 logger = logging.getLogger(__name__)
 
@@ -315,10 +316,22 @@ if not app.debug:
 @app.after_request
 def add_cache_headers(response):
     if request.path.startswith('/static/'):
-        # Cache static files for 1 hour
         response.cache_control.max_age = 3600
         response.cache_control.public = True
     return response
+
+@app.after_request
+def set_security_headers(response):
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    return response
+
+if not app.debug:
+    app.config['SESSION_COOKIE_SECURE'] = True
+    app.config['SESSION_COOKIE_HTTPONLY'] = True
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 # ---------------- RATE LIMITING CONFIG ----------------
 limiter = Limiter(
@@ -574,8 +587,11 @@ def admin_create_user():
 @login_required
 @admin_required
 def admin_change_password():
-    user_id = request.form.get("user_id")
+    user_id = request.form.get("user_id", type=int)
     new_password = request.form.get("new_password")
+    if not user_id:
+        flash("Invalid user.", "error")
+        return flask_redirect("/admin/users")
     
     try:
         hashed = generate_password_hash(new_password)
@@ -590,9 +606,15 @@ def admin_change_password():
 @login_required
 @admin_required
 def admin_change_role():
-    user_id = request.form.get("user_id")
+    user_id = request.form.get("user_id", type=int)
     role = request.form.get("role")
-    
+    if not user_id:
+        flash("Invalid user.", "error")
+        return flask_redirect("/admin/users")
+    if role not in ("admin", "user"):
+        flash("Invalid role.", "error")
+        return flask_redirect("/admin/users")
+
     try:
         query_db("UPDATE users SET role = %s WHERE id = %s", (role, user_id), commit=True)
         flash(f"Role updated to '{role}'.", "success")
@@ -622,7 +644,7 @@ def admin_delete_user(user_id):
 @admin_required
 def admin_files():
     # Listing all jobs as 'files'
-    page = request.args.get('page', 1, type=int)
+    page = max(1, request.args.get('page', 1, type=int))
     per_page = 20
     offset = (page - 1) * per_page
     
@@ -895,8 +917,8 @@ def extract_images_only_route():
         return send_file(real_path, as_attachment=True, download_name=zip_filename)
 
     except Exception as e:
-        logger.error(f"Image extraction route failed: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Image extraction route failed: {e}", exc_info=True)
+        return jsonify({"error": "Image extraction failed. Please try again."}), 500
 
 @app.route("/api/queue/batches", methods=["GET"]) 
 @app.route("/api/batches", methods=["GET"])
@@ -904,13 +926,15 @@ def extract_images_only_route():
 @login_required
 def list_batches_route():
     try:
-        limit = request.args.get('limit', 50, type=int)
+        limit = min(max(1, request.args.get('limit', 50, type=int)), 500)
         batches = query_db("""
             SELECT b.id, b.name, b.created_at, b.status,
-                   (SELECT COUNT(*) FROM jobs WHERE batch_id = b.id) as total_jobs,
-                   (SELECT COUNT(*) FROM jobs WHERE batch_id = b.id AND status = 'completed') as completed_jobs,
-                   (SELECT SUM(cost) FROM jobs WHERE batch_id = b.id) as total_cost
+                   COUNT(j.id) AS total_jobs,
+                   SUM(CASE WHEN j.status = 'completed' THEN 1 ELSE 0 END) AS completed_jobs,
+                   SUM(j.cost) AS total_cost
             FROM batches b
+            LEFT JOIN jobs j ON j.batch_id = b.id
+            GROUP BY b.id, b.name, b.created_at, b.status
             ORDER BY b.created_at DESC
             LIMIT %s
         """, (limit,))
@@ -1147,8 +1171,8 @@ def markup_upload():
 
         doc.close()
     except Exception as e:
-        logger.error(f"Markup upload failed: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Markup upload failed: {e}", exc_info=True)
+        return jsonify({"error": "Upload failed. Please try again."}), 500
 
     return jsonify({
         "session_id": session_id,
@@ -1162,7 +1186,7 @@ def markup_upload():
 @login_required
 def markup_serve_pdf(session_id):
     """Serve the raw PDF so PDF.js can render it client-side."""
-    if not re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', session_id):
+    if not re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', session_id, re.IGNORECASE):
         return jsonify({"error": "Invalid session"}), 400
     pdf_path = os.path.join(MARKUP_FOLDER, session_id, "source.pdf")
     real_path = os.path.realpath(pdf_path)
@@ -1183,7 +1207,7 @@ def markup_generate():
     session_id = data.get("session_id", "")
     regions = data.get("regions", [])
 
-    if not re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', session_id):
+    if not re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', session_id, re.IGNORECASE):
         return jsonify({"error": "Invalid session"}), 400
     if not regions:
         return jsonify({"error": "No regions provided"}), 400
@@ -1215,11 +1239,12 @@ def markup_generate():
             "download_url": f"/download/{output_filename}"
         })
     except Exception as e:
-        logger.error(f"Markup generate failed: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Markup generate failed: {e}", exc_info=True)
+        return jsonify({"error": "Generation failed. Please try again."}), 500
 
 
 _UUID_RE = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+_UUID_FLAGS = re.IGNORECASE
 
 
 @app.route("/api/markup/generate_region", methods=["POST"])
@@ -1233,7 +1258,7 @@ def markup_generate_region():
     session_id = data.get("session_id", "")
     region = data.get("region", {})
 
-    if not re.match(_UUID_RE, session_id):
+    if not re.match(_UUID_RE, session_id, _UUID_FLAGS):
         return jsonify({"error": "Invalid session"}), 400
     if not region:
         return jsonify({"error": "No region provided"}), 400
@@ -1249,8 +1274,8 @@ def markup_generate_region():
         results = process_markup_regions(pdf_path, [region])
         return jsonify({"result": results[0]})
     except Exception as e:
-        logger.error(f"Markup generate_region failed: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Markup generate_region failed: {e}", exc_info=True)
+        return jsonify({"error": "Generation failed. Please try again."}), 500
 
 
 @app.route("/api/markup/export", methods=["POST"])
@@ -1265,7 +1290,7 @@ def markup_export():
     results = data.get("results", [])
     pdf_filename = data.get("pdf_filename", "markup.pdf")
 
-    if not re.match(_UUID_RE, session_id):
+    if not re.match(_UUID_RE, session_id, _UUID_FLAGS):
         return jsonify({"error": "Invalid session"}), 400
     if not results:
         return jsonify({"error": "No results to export"}), 400
@@ -1282,8 +1307,8 @@ def markup_export():
         write_markup_excel(results, output_path, pdf_filename=pdf_filename)
         return jsonify({"download_url": f"/download/{output_filename}"})
     except Exception as e:
-        logger.error(f"Markup export failed: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Markup export failed: {e}", exc_info=True)
+        return jsonify({"error": "Export failed. Please try again."}), 500
 
 
 @app.route("/api/markup/refine_region", methods=["POST"])
@@ -1302,7 +1327,7 @@ def markup_refine_region():
 
     if not prompt:
         return jsonify({"error": "Refine prompt is required"}), 400
-    if not re.match(_UUID_RE, session_id):
+    if not re.match(_UUID_RE, session_id, _UUID_FLAGS):
         return jsonify({"error": "Invalid session"}), 400
     if not region:
         return jsonify({"error": "No region provided"}), 400
@@ -1324,8 +1349,8 @@ def markup_refine_region():
         result = refine_markup_region(png_bytes, previous_short, previous_long, prompt)
         return jsonify(result)
     except Exception as e:
-        logger.error(f"Markup refine_region failed: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Markup refine_region failed: {e}", exc_info=True)
+        return jsonify({"error": "Refinement failed. Please try again."}), 500
 
 
 
@@ -1408,8 +1433,8 @@ def get_job_review_data(job_id):
             "results": results
         })
     except Exception as e:
-        logger.error(f"Error parsing job data: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Error parsing job data: {e}", exc_info=True)
+        return jsonify({"error": "Failed to load job data. Please try again."}), 500
 
 @app.route("/api/job/<int:job_id>/pdf", methods=["GET"])
 @login_required
@@ -1445,8 +1470,8 @@ def update_job_review_data(job_id):
         update_review_excel(results, output_path)
         return jsonify({"success": True, "download_url": f"/download/{job['output_file']}"})
     except Exception as e:
-        logger.error(f"Failed to save reviewed Excel for job {job_id}: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Failed to save reviewed Excel for job {job_id}: {e}", exc_info=True)
+        return jsonify({"error": "Save failed. Please try again."}), 500
 
 
 
@@ -1471,8 +1496,8 @@ def job_generate_region(job_id):
         results = process_markup_regions(pdf_path, [region])
         return jsonify({"result": results[0]})
     except Exception as e:
-        logger.error(f"Job {job_id} generate_region failed: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Job {job_id} generate_region failed: {e}", exc_info=True)
+        return jsonify({"error": "Generation failed. Please try again."}), 500
 
 @app.route("/api/job/<int:job_id>/refine_region", methods=["POST"])
 @login_required
@@ -1508,8 +1533,8 @@ def job_refine_region(job_id):
         result = refine_markup_region(png_bytes, previous_short, previous_long, prompt)
         return jsonify(result)
     except Exception as e:
-        logger.error(f"Job {job_id} refine_region failed: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Job {job_id} refine_region failed: {e}", exc_info=True)
+        return jsonify({"error": "Refinement failed. Please try again."}), 500
 
 
 if __name__ == "__main__":
