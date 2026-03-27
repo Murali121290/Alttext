@@ -306,6 +306,9 @@ init_db()
 # ---------------- APP ----------------
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev_secret_key_change_in_prod") # vital for session
+# Set debug flag early so conditional config blocks below evaluate correctly.
+# app.run(debug=True) sets this too late — the blocks run at import time.
+app.debug = os.getenv("FLASK_DEBUG", "true").lower() in ("1", "true", "yes")
 
 # Enable template caching in production
 if not app.debug:
@@ -1538,4 +1541,4 @@ def job_refine_region(job_id):
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host='0.0.0.0', use_reloader=False)
+    app.run(debug=app.debug, host='0.0.0.0', use_reloader=False)
