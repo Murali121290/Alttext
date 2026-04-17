@@ -1,25 +1,37 @@
 {% extends "base.html" %}
 
+{% block main_class %}p-0{% endblock %}
+
 {% block content %}
 <script src="/static/js/pdf.min.js"></script>
 <script>
-    pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/js/pdf.worker.min.js';
+    if (typeof pdfjsLib === 'undefined') {
+        console.error('[PDF.js] pdf.min.js failed to load from /static/js/pdf.min.js');
+    } else {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/js/pdf.worker.min.js';
+        console.log('[PDF.js] version loaded:', pdfjsLib.version);
+    }
 </script>
 
-<div x-data="reviewApp({{ job_id }}, '{{ pdf_filename }}')" @keydown.window.ctrl.z.prevent="undoLastRegion()" class="h-[calc(100vh-80px)] overflow-hidden flex flex-col md:flex-row gap-4 p-4 relative w-full">
+<div x-data="reviewApp({{ job_id }}, '{{ pdf_filename }}')" @keydown.window.ctrl.z.prevent="undoLastRegion()" x-init="$nextTick(() => initSplit())" class="h-[calc(100vh-64px)] overflow-hidden flex flex-col md:flex-row w-full bg-slate-200/50 border-t border-slate-200 relative">
 
     <!-- Loading Overlay -->
-    <div x-show="isLoading" class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/80 rounded-2xl gap-3">
+    <div x-show="isLoading" class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/80 gap-3">
         <i data-lucide="loader-2" class="w-8 h-8 text-emerald-500 animate-spin"></i>
         <p class="text-sm text-slate-500 font-medium">Loading review data...</p>
     </div>
 
     <!-- Sidebar: List of Regions -->
-    <div class="w-full md:w-1/3 bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col overflow-hidden max-h-full">
+    <div id="sidebar-pane" class="w-full md:w-1/3 bg-white flex flex-col overflow-hidden h-full z-10">
         <div class="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center shrink-0">
             <div class="flex items-center gap-2">
                 <a href="/batches" class="text-slate-500 hover:text-slate-700" title="Back to Batches"><i data-lucide="arrow-left" class="w-5 h-5"></i></a>
-                <h2 class="font-bold text-slate-800">Review & Edit</h2>
+                <h2 class="font-bold text-slate-800 flex flex-col md:flex-row items-start md:items-center gap-2">
+                    <button @click="undoLastRegion()" :disabled="!canUndo" title="Undo Last Box (Ctrl+Z)" class="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-[10px] disabled:opacity-50 transition-colors flex items-center gap-1 shadow-sm font-medium">
+                        <i data-lucide="undo-2" class="w-2.5 h-2.5 pointer-events-none"></i> Undo
+                    </button>
+                    <span class="truncate">Review & Edit</span>
+                </h2>
             </div>
             <div class="flex gap-2">
                 <button @click="sortRegions()" title="Sort by Page" class="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-xs transition-colors flex items-center gap-1 shadow-sm font-medium">
@@ -27,9 +39,6 @@
                 </button>
                 <button @click="refreshLucide()" title="Refresh" class="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-xs transition-colors flex items-center gap-1 shadow-sm font-medium">
                     <i data-lucide="refresh-cw" class="w-3 h-3 pointer-events-none"></i> Refresh
-                </button>
-                <button @click="undoLastRegion()" :disabled="!canUndo" title="Undo Last Box (Ctrl+Z)" class="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-xs disabled:opacity-50 transition-colors flex items-center gap-1 shadow-sm font-medium">
-                    <i data-lucide="undo-2" class="w-3 h-3 pointer-events-none"></i> Undo
                 </button>
                 <button @click="exportData()" :disabled="regions.length === 0 || isExporting" class="px-3 py-1 rounded text-sm transition-colors shadow-sm font-medium" style="background-color: #059669; color: white;" :style="(regions.length === 0 || isExporting) ? 'opacity: 0.5; cursor: not-allowed;' : 'opacity: 1; cursor: pointer;'">
                     <span x-text="isExporting ? 'Saving...' : 'Save to Excel'"></span>
@@ -39,17 +48,17 @@
 
         <!-- Regions List -->
         <div class="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50">
-            <template x-for="region in sortedRegions" :key="region.id">
+            <template x-for="region in regions" :key="region.id">
                 <div class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm relative group cursor-pointer transition-shadow" 
                      :class="{'ring-2 ring-emerald-500': selectedRegion && selectedRegion.id === region.id}"
-                     @click="selectRegion(region)">
+                     @click="$event.target.closest('button') || selectRegion(region)">
                     
                     <div class="flex items-start justify-between mb-1">
                         <h3 class="font-semibold text-sm text-slate-700 flex items-center gap-2">
                             <span class="bg-amber-500 text-white px-1.5 py-0.5 rounded text-[10px]" x-text="'#' + region.id"></span>
                             <span x-text="'Page ' + (region.page + 1)"></span>
                         </h3>
-                        <button @click.stop="deleteRegion(region.id)" title="Delete Region" class="text-red-500 hover:text-red-700 transition-colors bg-red-50 hover:bg-red-100 rounded p-1.5 border border-red-100 flex-shrink-0">
+                        <button @click.prevent.stop="deleteRegion(region.id)" type="button" title="Delete Region" class="text-red-500 hover:text-red-700 transition-colors bg-red-50 hover:bg-red-100 rounded p-1.5 border border-red-100 flex-shrink-0">
                             <i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i>
                         </button>
                     </div>
@@ -88,147 +97,139 @@
                 </div>
             </template>
             <div x-show="regions.length === 0" class="text-center text-slate-500 text-sm mt-10">
-                Draw regions on the PDF to generate alt text.
+                <span>Draw annotations in the document, then click "Process Annotations" to generate alt text.</span>
             </div>
         </div>
     </div>
 
-    <!-- Main Content: Continuous PDF Canvas -->
-    <div class="w-full md:w-2/3 bg-slate-200/50 rounded-2xl shadow-inner border border-slate-200 overflow-hidden flex flex-col relative">
+    <!-- Main Content: PDF Viewer -->
+    <div id="pdf-pane" class="w-full md:w-2/3 flex flex-col h-full z-0 relative">
+
         <!-- Toolbar -->
-        <div class="p-3 bg-white border-b border-slate-200 flex justify-between items-center shadow-sm z-10 shrink-0">
-            <div class="flex items-center gap-2">
-                <button @click="scrollToPage(currentPage - 1)" :disabled="currentPage <= 0" class="p-1.5 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-50 transition-colors" title="Previous Page"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
-                <span class="text-sm font-medium text-slate-700 flex items-center gap-1">
-                    Page 
-                    <input type="number" :value="currentPage + 1" @change="scrollToPage($event.target.value - 1)" class="w-12 text-center border border-slate-200 rounded p-0.5 focus:ring-emerald-500 focus:border-emerald-500 outline-none" min="1" :max="pageCount"> 
-                    of <span x-text="pageCount"></span>
-                </span>
-                <button @click="scrollToPage(currentPage + 1)" :disabled="currentPage >= pageCount - 1" class="p-1.5 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-50 transition-colors" title="Next Page"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
-            </div>
-            <div class="flex items-center gap-2">
-                <button @click="zoomOut()" class="p-1.5 rounded bg-slate-100 hover:bg-slate-200 transition-colors" title="Zoom Out"><i data-lucide="zoom-out" class="w-4 h-4"></i></button>
-                <span class="text-sm font-medium w-16 text-center" x-text="Math.round(scale * 100) + '%'"></span>
-                <button @click="zoomIn()" class="p-1.5 rounded bg-slate-100 hover:bg-slate-200 transition-colors" title="Zoom In"><i data-lucide="zoom-in" class="w-4 h-4"></i></button>
-            </div>
+        <div id="pdf-toolbar" class="shrink-0 p-3 bg-white border-b border-slate-200 flex items-center gap-3 shadow-sm z-10">
+            <button @click="processAnnotations()" :disabled="isProcessing || noDocument" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-sm transition-colors shadow-sm font-medium flex items-center gap-2 disabled:opacity-50">
+                <i x-show="isProcessing" data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>
+                <span x-text="isProcessing ? 'Processing...' : 'Process Annotations'"></span>
+            </button>
         </div>
 
-        <!-- No-PDF placeholder (Excel/DOCX jobs) -->
-        <div x-show="noPdf" class="flex-1 flex flex-col items-center justify-center gap-3 text-slate-500 bg-slate-100">
+        <!-- No-Document placeholder -->
+        <div x-show="noDocument" class="flex-1 flex flex-col items-center justify-center gap-3 text-slate-500 bg-slate-100">
             <i data-lucide="file-x" class="w-12 h-12 text-slate-300"></i>
-            <p class="text-sm font-medium">No PDF available</p>
-            <p class="text-xs text-slate-400">This job was processed from an Excel/DOCX file.<br>Edit the alt text directly in the panel on the left.</p>
+            <p class="text-sm font-medium">No Document available</p>
         </div>
 
-        <!-- Scrollable Stacked Canvas Area -->
-        <div x-show="!noPdf" class="flex-1 overflow-auto p-4 flex flex-col items-center bg-slate-300 relative" x-ref="container" @scroll.passive="onScroll">
-            <div class="w-full max-w-full flex flex-col items-center">
-                <template x-for="(pageMeta, index) in pages" :key="index">
-                    <div class="relative shadow-xl bg-white mb-6 border border-slate-200" 
-                         :data-page="index" 
-                         :style="`width: ${pageMeta.width_pt * scale}px; height: ${pageMeta.height_pt * scale}px;`">
-                        
-                        <canvas :id="'canvas-' + index" class="pdf-canvas block w-full h-full"></canvas>
-                        
-                        <!-- Drawing Overlay -->
-                        <div class="absolute inset-0 z-20 cursor-crosshair" 
-                             @mousedown="startDraw($event, index)" 
-                             @mousemove="draw($event, index)" 
-                             @mouseup="endDraw($event, index)" 
-                             @mouseleave="endDraw($event, index)">
-                             
-                            <!-- Current Drawing Box -->
-                            <div x-show="isDrawing && drawingPage === index" 
-                                 class="absolute border-2 border-emerald-500 bg-emerald-500/20"
-                                 :style="`left: ${drawBox.x}px; top: ${drawBox.y}px; width: ${drawBox.w}px; height: ${drawBox.h}px;`">
-                            </div>
+        <!-- PDF.js viewer -->
+        <div class="flex-1 w-full flex-col relative h-full bg-slate-200/50" x-show="!noDocument" style="display:flex;">
+            <!-- Toolbar -->
+            <div class="p-3 bg-white border-b border-slate-200 flex justify-between items-center shadow-sm z-10 shrink-0">
+                <div class="flex items-center gap-2">
+                    <button @click="scrollToPage(currentPage - 1)" :disabled="currentPage <= 0" class="p-1.5 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-50 transition-colors" title="Previous Page"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
+                    <span class="text-sm font-medium text-slate-700 flex items-center gap-1">
+                        Page 
+                        <input type="number" :value="currentPage + 1" @change="scrollToPage($event.target.value - 1)" class="w-12 text-center border border-slate-200 rounded p-0.5 focus:ring-emerald-500 focus:border-emerald-500 outline-none" min="1" :max="pageCount"> 
+                        of <span x-text="pageCount"></span>
+                    </span>
+                    <button @click="scrollToPage(currentPage + 1)" :disabled="currentPage >= pageCount - 1" class="p-1.5 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-50 transition-colors" title="Next Page"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button @click="zoomOut()" class="p-1.5 rounded bg-slate-100 hover:bg-slate-200 transition-colors" title="Zoom Out"><i data-lucide="zoom-out" class="w-4 h-4"></i></button>
+                    <span class="text-sm font-medium w-16 text-center" x-text="Math.round(scale * 100) + '%'"></span>
+                    <button @click="zoomIn()" class="p-1.5 rounded bg-slate-100 hover:bg-slate-200 transition-colors" title="Zoom In"><i data-lucide="zoom-in" class="w-4 h-4"></i></button>
+                </div>
+            </div>
 
-                            <!-- Existing Regions -->
-                            <template x-for="r in getPageRegions(index)" :key="r.id">
-                                <div class="absolute border-2 transition-all cursor-pointer hover:bg-blue-500/10"
-                                     :class="selectedRegion && selectedRegion.id === r.id ? 'border-blue-500 bg-blue-500/20 z-30' : 'border-amber-500 hover:border-blue-400 z-10'"
-                                     :style="`left: ${r.x0_pct * 100}%; top: ${r.y0_pct * 100}%; width: ${(r.x1_pct - r.x0_pct) * 100}%; height: ${(r.y1_pct - r.y0_pct) * 100}%;`"
-                                     @click.stop="selectRegion(r)">
-                                     <div class="absolute -top-6 left-0 text-white text-[10px] px-1.5 py-0.5 rounded shadow whitespace-nowrap"
-                                          :class="selectedRegion && selectedRegion.id === r.id ? 'bg-blue-600' : 'bg-amber-500'"
-                                          x-text="'#' + r.id"></div>
+            <!-- Scrollable Stacked Canvas Area -->
+            <div class="flex-1 overflow-auto p-4 flex flex-col items-center bg-slate-300 relative h-full" x-ref="container" @scroll.passive="onScroll">
+                <div class="w-full max-w-full flex flex-col items-center">
+                    <template x-for="(pageMeta, index) in pages" :key="index">
+                        <div class="relative shadow-xl bg-white mb-6 border border-slate-200" 
+                             :data-page="index" 
+                             :style="`width: ${pageMeta.width_pt * scale}px; height: ${pageMeta.height_pt * scale}px;`">
+                            <canvas :id="'canvas-' + index" class="pdf-canvas block w-full h-full"></canvas>
+                            <!-- Drawing Overlay -->
+                            <div class="absolute inset-0 z-20 cursor-crosshair" 
+                                 @mousedown="startDraw($event, index)" 
+                                 @mousemove="draw($event, index)" 
+                                 @mouseup="endDraw($event, index)" 
+                                 @mouseleave="endDraw($event, index)">
+                                <div x-show="isDrawing && drawingPage === index" 
+                                     class="absolute border-2 border-emerald-500 bg-emerald-500/20"
+                                     :style="`left: ${drawBox.x}px; top: ${drawBox.y}px; width: ${drawBox.w}px; height: ${drawBox.h}px;`">
                                 </div>
-                            </template>
+                                <template x-for="r in getPageRegions(index)" :key="r.id">
+                                    <div class="absolute border-[2.5px] cursor-pointer group hover:bg-white/10"
+                                         :class="selectedRegion && selectedRegion.id === r.id ? 'z-30 ring-2 ring-white/50 shadow-lg' : 'z-10'"
+                                         :style="`left: ${r.x0_pct * 100}%; top: ${r.y0_pct * 100}%; width: ${(r.x1_pct - r.x0_pct) * 100}%; height: ${(r.y1_pct - r.y0_pct) * 100}%; border-color: ${r.color || '#f59e0b'}; background-color: ${r.color || '#f59e0b'}15;`"
+                                         @click.stop="selectRegion(r)">
+                                         <div class="absolute -top-7 left-0 text-white text-[11px] font-bold px-2 py-0.5 rounded shadow-sm whitespace-nowrap origin-bottom-left"
+                                              :style="`background-color: ${r.color || '#f59e0b'}`"
+                                              :class="selectedRegion && selectedRegion.id === r.id ? 'scale-110' : ''"
+                                              x-text="'#' + r.id"></div>
+                                         <!-- Resize handles (visible only when selected) -->
+                                         <template x-if="selectedRegion && selectedRegion.id === r.id">
+                                             <div>
+                                                 <template x-for="h in ['nw','n','ne','w','e','sw','s','se']" :key="h">
+                                                     <div class="absolute w-4 h-4 bg-white border-2 border-emerald-500 rounded-full z-40 shadow-sm"
+                                                          :style="handleStyle(h)"
+                                                          :class="handleCursor(h)"
+                                                          @mousedown.stop="startResize($event, r, h, index)">
+                                                     </div>
+                                                 </template>
+                                             </div>
+                                         </template>
+                                    </div>
+                                </template>
+                            </div>
                         </div>
-                    </div>
-                </template>
+                    </template>
+                </div>
             </div>
         </div>
+
     </div>
 </div>
 
 <script>
-function reviewApp(jobId, pdfFilename) {
-    let pdfDoc = null;
-    let observer = null;
-    let renderedPages = new Set();
-    let renderingPages = new Set();
+// pdfDoc stored OUTSIDE Alpine's reactive scope to avoid Proxy wrapping,
+// which breaks pdf.js's private class fields (#d, #pagePromises, etc.)
+// See: https://github.com/mozilla/pdf.js/discussions/17326
+window._reviewPdfDoc = null;
 
+function reviewApp(jobId, pdfFilename) {
     return {
         jobId: jobId,
         pdfFilename: pdfFilename,
         isLoading: true,
         isExporting: false,
+        isProcessing: false,
+        regions: [],
+        splitInstance: null,
+        selectedRegion: null,
+        noDocument: false,
+
+        // PDF js variables
         pageCount: 0,
         pages: [],
-        regions: [],
-        
         scale: 1.5,
         currentPage: 0,
-        
         isDrawing: false,
         drawingPage: null,
         startX: 0,
         startY: 0,
         drawBox: {x: 0, y: 0, w: 0, h: 0},
-        
         regionCounter: 0,
-        selectedRegion: null,
-        noPdf: false,
 
-        init() {
-            this.loadData();
-        },
+        // Resize state
+        isResizing: false,
+        resizeHandle: null,
+        resizingRegionId: null,
+        resizeStartX: 0,
+        resizeStartY: 0,
+        resizePageRect: null,
+        resizeStartBox: null,
 
-
-        get currentPageRegions() {
-            return this.sortedRegions.filter(r => r.page === this.currentPage);
-        },
-
-        get sortedRegions() {
-            // Sort by page first, then by vertical (Y) position on the page
-            return [...this.regions].sort((a, b) => {
-                if (a.page !== b.page) return a.page - b.page;
-                return a.y0_pct - b.y0_pct;
-            });
-        },
-
-        get pageRegions() {
-            const page = this.currentPage;
-            return [...this.regions]
-                .filter(r => r.page === page)
-                .sort((a, b) => (a.y0_pct ?? 0) - (b.y0_pct ?? 0));
-        },
-
-        sortRegions() {
-            // Re-assign regions in sorted order so cards re-render in place
-            this.regions = [...this.regions].sort((a, b) => {
-                if (a.page !== b.page) return a.page - b.page;
-                const ay = a.y0_pct ?? 0;
-                const by = b.y0_pct ?? 0;
-                return ay - by;
-            });
-        },
-
-        get canUndo() {
-            return this.regions.some(r => r.isUserDrawn);
-        },
-
+        get canUndo() { return this.regions.some(r => r.isUserDrawn); },
         undoLastRegion() {
             for (let i = this.regions.length - 1; i >= 0; i--) {
                 if (this.regions[i].isUserDrawn) {
@@ -237,9 +238,36 @@ function reviewApp(jobId, pdfFilename) {
                 }
             }
         },
-
         getPageRegions(pageIndex) {
             return this.regions.filter(r => r.page === pageIndex && r.x0_pct != null);
+        },
+
+
+        init() {
+            this.loadData();
+        },
+
+        initSplit() {
+            if (window.Split && !this.splitInstance && window.innerWidth >= 768) {
+                this.splitInstance = Split(['#sidebar-pane', '#pdf-pane'], {
+                    sizes: [33, 67],
+                    minSize: [280, 300],
+                    gutterSize: 6,
+                    cursor: 'col-resize',
+                    onDragEnd: () => {
+                        window.dispatchEvent(new Event('resize'));
+                    }
+                });
+            }
+        },
+
+        sortRegions() {
+            this.regions = [...this.regions].sort((a, b) => {
+                if (a.page !== b.page) return a.page - b.page;
+                const ay = a.y0_pct ?? 0;
+                const by = b.y0_pct ?? 0;
+                return ay - by;
+            });
         },
 
         refreshLucide() {
@@ -249,7 +277,6 @@ function reviewApp(jobId, pdfFilename) {
                 }
             }, 50);
         },
-
         
         async loadData() {
             try {
@@ -263,8 +290,10 @@ function reviewApp(jobId, pdfFilename) {
                     isRefining: false,
                     refinePrompt: ''
                 }));
-                this.regionCounter = Math.max(0, ...this.regions.map(r => r.id));
 
+                this.regionCounter = Math.max(0, ...this.regions.map(r => r.id));
+                await this.$nextTick();
+                
                 await this.loadPDF();
                 this.refreshLucide();
             } catch(err) {
@@ -274,225 +303,193 @@ function reviewApp(jobId, pdfFilename) {
             }
         },
 
+        
         async loadPDF() {
-            // Pre-fetch with credentials so Flask session cookie is sent (avoids login-redirect HTML being parsed as PDF)
-            const res = await fetch(`/api/job/${this.jobId}/pdf`, { credentials: 'same-origin' });
-            if (!res.ok) {
-                const errData = await res.json().catch(() => ({ error: res.statusText }));
-                // Excel/DOCX jobs have no PDF — show message instead of crashing
-                if (errData.error === 'no_pdf') {
-                    this.noPdf = true;
-                    return;
-                }
-                throw new Error(errData.error || 'PDF not found');
+            if (typeof pdfjsLib === 'undefined') {
+                alert("PDF.js library is not loaded. Check /static/js/pdf.min.js path.");
+                return;
             }
-            const buffer = await res.arrayBuffer();
-            pdfDoc = await pdfjsLib.getDocument({ data: buffer }).promise;
-            this.pageCount = pdfDoc.numPages;
+            window.renderedPages = window.renderedPages || new Set();
+            window.renderingPages = window.renderingPages || new Set();
+            try {
+                const res = await fetch(`/api/job/${this.jobId}/doc`, { credentials: 'same-origin' });
+                if (!res.ok) throw new Error('PDF not found (HTTP ' + res.status + ')');
+                const buffer = await res.arrayBuffer();
 
-            // Build pages meta
+                window._reviewPdfDoc = await pdfjsLib.getDocument({
+                    data: buffer,
+                    cMapUrl: '/static/cmaps/',
+                    cMapPacked: true,
+                    standardFontDataUrl: '/static/standard_fonts/'
+                }).promise;
+            } catch(e) {
+                console.error("[loadPDF] failed:", e);
+                alert("Failed to load PDF: " + (e.message || e));
+                return;   // <-- abort before dereferencing pdfDoc
+            }
+
+            this.pageCount = window._reviewPdfDoc.numPages;
+            this.pages = [];
             for (let i = 1; i <= this.pageCount; i++) {
-                const page = await pdfDoc.getPage(i);
+                const page = await window._reviewPdfDoc.getPage(i);
                 const viewport = page.getViewport({ scale: 1.0 });
-                this.pages.push({
-                    width_pt: viewport.width,
-                    height_pt: viewport.height
-                });
+                this.pages.push({ width_pt: viewport.width, height_pt: viewport.height });
             }
 
-            if (observer) {
-                observer.disconnect();
-            }
-
-            // Render observer — wide margin so pages load before scrolling into view
-            observer = new IntersectionObserver((entries) => {
+            if (window.pdfObserver) window.pdfObserver.disconnect();
+            window.pdfObserver = new IntersectionObserver((entries) => {
                 entries.forEach(entry => {
-                    if (entry.isIntersecting) {
-                        this.renderPageIfVisible(parseInt(entry.target.dataset.page), entry.target);
-                    }
+                    if (entry.isIntersecting) this.renderPageIfVisible(parseInt(entry.target.dataset.page), entry.target);
                 });
-            }, {
-                root: this.$refs.container,
-                rootMargin: '800px 0px'
-            });
+            }, { root: this.$refs.container, rootMargin: '800px 0px' });
 
-            // Page-tracking observer — fires when any page enters/leaves viewport,
-            // then delegates to onScroll() which picks the page whose top is closest
-            // to the container top (handles partial-overlap correctly)
-            const pageTracker = new IntersectionObserver(() => {
-                this.onScroll();
-            }, {
-                root: this.$refs.container,
-                rootMargin: '0px',
-                threshold: [0, 0.25, 0.5, 0.75, 1.0]
-            });
-
-            // Start observing immediately after DOM updates
             this.$nextTick(() => {
                 const containers = this.$refs.container.querySelectorAll('[data-page]');
-                containers.forEach(el => {
-                    observer.observe(el);
-                    pageTracker.observe(el);
-                });
+                containers.forEach(el => window.pdfObserver.observe(el));
                 this.onScroll();
             });
         },
-
+        scrollToPage(index) {
+            index = parseInt(index);
+            if (isNaN(index) || index < 0 || index >= this.pageCount) return;
+            const container = this.$refs.container.querySelector(`[data-page="${index}"]`);
+            if (container) container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        },
         onScroll() {
-            if (!pdfDoc) return;
+            if (!window._reviewPdfDoc) return;
             const containers = this.$refs.container.querySelectorAll('[data-page]');
             const containerRect = this.$refs.container.getBoundingClientRect();
-
             let closestPage = this.currentPage;
-            let maxVisibleRatio = 0;
-
+            let minDistance = Infinity;
             containers.forEach(el => {
                 const rect = el.getBoundingClientRect();
-
                 if (rect.top < containerRect.bottom + 800 && rect.bottom > containerRect.top - 800) {
-                    const pageIndex = parseInt(el.dataset.page);
-                    this.renderPageIfVisible(pageIndex, el);
+                    this.renderPageIfVisible(parseInt(el.dataset.page), el);
                 }
-
-                const visibleTop = Math.max(rect.top, containerRect.top);
-                const visibleBottom = Math.min(rect.bottom, containerRect.bottom);
-                const visibleHeight = Math.max(0, visibleBottom - visibleTop);
-                const pageHeight = rect.height || 1;
-                const ratio = visibleHeight / pageHeight;
-
-                if (ratio > maxVisibleRatio) {
-                    maxVisibleRatio = ratio;
-                    closestPage = parseInt(el.dataset.page);
-                }
+                const distance = Math.abs(rect.top - containerRect.top);
+                if (distance < minDistance) { minDistance = distance; closestPage = parseInt(el.dataset.page); }
             });
-
-            if (this.currentPage !== closestPage) {
-                this.currentPage = closestPage;
-            }
+            if (this.currentPage !== closestPage) this.currentPage = closestPage;
         },
-
         async renderPageIfVisible(pageIndex, containerEl) {
-            if (!pdfDoc || renderedPages.has(pageIndex) || renderingPages.has(pageIndex)) return;
-            renderingPages.add(pageIndex);
-            
+            if (!window._reviewPdfDoc || window.renderedPages.has(pageIndex) || window.renderingPages.has(pageIndex)) return;
+            window.renderingPages.add(pageIndex);
             try {
-                const page = await pdfDoc.getPage(pageIndex + 1);
+                const page = await window._reviewPdfDoc.getPage(pageIndex + 1);
                 const viewport = page.getViewport({ scale: this.scale });
-                
                 const canvas = containerEl.querySelector('canvas');
                 if (!canvas) return;
-                
                 const ctx = canvas.getContext('2d');
-                canvas.width = viewport.width;
-                canvas.height = viewport.height;
-                
-                const renderContext = {
-                    canvasContext: ctx,
-                    viewport: viewport
-                };
-                
-                await page.render(renderContext).promise;
-                renderedPages.add(pageIndex);
+                canvas.width = viewport.width; canvas.height = viewport.height;
+                await page.render({canvasContext: ctx, viewport: viewport}).promise;
+                window.renderedPages.add(pageIndex);
             } catch (err) {
-                if (err.name !== 'RenderingCancelledException') {
-                    console.error('Error rendering page:', err);
-                }
-            } finally {
-                renderingPages.delete(pageIndex);
-            }
+                console.error("[renderPageIfVisible] page " + pageIndex + " failed:", err);
+                // Don't alert on every page error — log and continue
+            } finally { window.renderingPages.delete(pageIndex); }
         },
-
         changeScale(delta) {
             this.scale += delta;
-            
-            // Clear all rendered statuses so they re-render on scroll
-            renderedPages.clear();
-            document.querySelectorAll('.pdf-canvas').forEach(c => {
-                const ctx = c.getContext('2d');
-                ctx.clearRect(0, 0, c.width, c.height);
-            });
-
-            // Force re-render of currently visible ones
+            window.renderedPages.clear();
+            document.querySelectorAll('.pdf-canvas').forEach(c => c.getContext('2d').clearRect(0, 0, c.width, c.height));
             this.$nextTick(() => {
-                const containers = this.$refs.container.querySelectorAll('[data-page]');
-                containers.forEach(el => {
+                const containerRect = this.$refs.container.getBoundingClientRect();
+                this.$refs.container.querySelectorAll('[data-page]').forEach(el => {
                     const rect = el.getBoundingClientRect();
-                    const containerRect = this.$refs.container.getBoundingClientRect();
-                    // If vertically in viewport roughly
                     if (rect.top < containerRect.bottom + 800 && rect.bottom > containerRect.top - 800) {
-                        const pageIndex = parseInt(el.dataset.page);
-                        this.renderPageIfVisible(pageIndex, el);
+                        this.renderPageIfVisible(parseInt(el.dataset.page), el);
                     }
                 });
             });
         },
-
-        async zoomIn() {
-            if(this.scale < 3.0) {
-                this.changeScale(0.25);
-            }
-        },
-        
-        async zoomOut() {
-            if(this.scale > 0.5) {
-                this.changeScale(-0.25);
-            }
-        },
-
+        zoomIn() { if(this.scale < 3.0) this.changeScale(0.25); },
+        zoomOut() { if(this.scale > 0.5) this.changeScale(-0.25); },
         startDraw(e, pageIndex) {
-            if (e.button !== 0) return; // only left click
-            this.isDrawing = true;
-            this.drawingPage = pageIndex;
+            if (e.button !== 0) return;
+            this.isDrawing = true; this.drawingPage = pageIndex;
             const rect = e.currentTarget.getBoundingClientRect();
-            this.startX = e.clientX - rect.left;
-            this.startY = e.clientY - rect.top;
+            this.startX = e.clientX - rect.left; this.startY = e.clientY - rect.top;
             this.drawBox = { x: this.startX, y: this.startY, w: 0, h: 0 };
         },
-
         draw(e, pageIndex) {
+            if (this.isResizing) { this.doResize(e); return; }
             if (!this.isDrawing || this.drawingPage !== pageIndex) return;
             const rect = e.currentTarget.getBoundingClientRect();
             const currentX = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
             const currentY = Math.max(0, Math.min(e.clientY - rect.top, rect.height));
-            
-            this.drawBox.x = Math.min(this.startX, currentX);
-            this.drawBox.y = Math.min(this.startY, currentY);
-            this.drawBox.w = Math.abs(currentX - this.startX);
-            this.drawBox.h = Math.abs(currentY - this.startY);
+            this.drawBox.x = Math.min(this.startX, currentX); this.drawBox.y = Math.min(this.startY, currentY);
+            this.drawBox.w = Math.abs(currentX - this.startX); this.drawBox.h = Math.abs(currentY - this.startY);
         },
-
         endDraw(e, pageIndex) {
+            if (this.isResizing) { this.endResize(); return; }
             if (!this.isDrawing || this.drawingPage !== pageIndex) return;
-            this.isDrawing = false;
-            this.drawingPage = null;
-            
+            this.isDrawing = false; this.drawingPage = null;
             if (this.drawBox.w > 10 && this.drawBox.h > 10) {
                 const rect = e.currentTarget.getBoundingClientRect();
                 this.regionCounter++;
                 const newRegion = {
-                    id: this.regionCounter,
-                    page: pageIndex,
-                    x0_pct: this.drawBox.x / rect.width,
-                    y0_pct: this.drawBox.y / rect.height,
-                    x1_pct: (this.drawBox.x + this.drawBox.w) / rect.width,
-                    y1_pct: (this.drawBox.y + this.drawBox.h) / rect.height,
-                    label: 'User Drawn Region',
-                    short_alt: '',
-                    long_alt: '',
-                    crop_png_b64: null,
-                    isLoading: true,
-                    isRefining: false,
-                    refinePrompt: '',
-                    isUserDrawn: true
+                    id: this.regionCounter, page: pageIndex,
+                    x0_pct: this.drawBox.x / rect.width, y0_pct: this.drawBox.y / rect.height,
+                    x1_pct: (this.drawBox.x + this.drawBox.w) / rect.width, y1_pct: (this.drawBox.y + this.drawBox.h) / rect.height,
+                    label: 'User Drawn Region', short_alt: '', long_alt: '', crop_png_b64: null,
+                    isLoading: true, isRefining: false, refinePrompt: '', isUserDrawn: true
                 };
-                this.regions.push(newRegion);
-                this.selectedRegion = newRegion;
-                this.refreshLucide();
-                
-                // Call API
+                this.regions.push(newRegion); this.selectedRegion = newRegion; this.refreshLucide();
                 this.generateRegionAltText(newRegion);
             }
             this.drawBox = {x: 0, y: 0, w: 0, h: 0};
+        },
+
+        handleStyle(h) {
+            const pos = {
+                nw: 'top:-8px;left:-8px', n: 'top:-8px;left:calc(50% - 8px)', ne: 'top:-8px;right:-8px',
+                w:  'top:calc(50% - 8px);left:-8px',                           e: 'top:calc(50% - 8px);right:-8px',
+                sw: 'bottom:-8px;left:-8px', s: 'bottom:-8px;left:calc(50% - 8px)', se: 'bottom:-8px;right:-8px'
+            };
+            return pos[h] || '';
+        },
+        handleCursor(h) {
+            const cursors = { nw: 'cursor-nw-resize', n: 'cursor-n-resize', ne: 'cursor-ne-resize',
+                              w: 'cursor-w-resize', e: 'cursor-e-resize',
+                              sw: 'cursor-sw-resize', s: 'cursor-s-resize', se: 'cursor-se-resize' };
+            return cursors[h] || '';
+        },
+        startResize(e, region, handle, pageIndex) {
+            this.isResizing = true;
+            this.resizeHandle = handle;
+            this.resizingRegionId = region.id;
+            this.resizeStartX = e.clientX;
+            this.resizeStartY = e.clientY;
+            const el = this.$refs.container.querySelector(`[data-page="${pageIndex}"]`);
+            this.resizePageRect = el.getBoundingClientRect();
+            this.resizeStartBox = { x0_pct: region.x0_pct, y0_pct: region.y0_pct, x1_pct: region.x1_pct, y1_pct: region.y1_pct };
+        },
+        doResize(e) {
+            const dx = (e.clientX - this.resizeStartX) / this.resizePageRect.width;
+            const dy = (e.clientY - this.resizeStartY) / this.resizePageRect.height;
+            const region = this.regions.find(r => r.id === this.resizingRegionId);
+            if (!region) return;
+            const b = this.resizeStartBox, h = this.resizeHandle;
+            let x0 = b.x0_pct, y0 = b.y0_pct, x1 = b.x1_pct, y1 = b.y1_pct;
+            if (h.includes('n')) y0 = Math.min(b.y0_pct + dy, b.y1_pct - 0.01);
+            if (h.includes('s')) y1 = Math.max(b.y1_pct + dy, b.y0_pct + 0.01);
+            if (h.includes('w')) x0 = Math.min(b.x0_pct + dx, b.x1_pct - 0.01);
+            if (h.includes('e')) x1 = Math.max(b.x1_pct + dx, b.x0_pct + 0.01);
+            region.x0_pct = Math.max(0, x0); region.y0_pct = Math.max(0, y0);
+            region.x1_pct = Math.min(1, x1); region.y1_pct = Math.min(1, y1);
+        },
+        endResize() {
+            if (this.resizingRegionId) {
+                const region = this.regions.find(r => r.id === this.resizingRegionId);
+                if (region) {
+                    this.generateRegionAltText(region);
+                }
+            }
+            this.isResizing = false;
+            this.resizeHandle = null;
+            this.resizingRegionId = null;
+            this.resizeStartBox = null;
+            this.resizePageRect = null;
         },
 
         deleteRegion(id) {
@@ -505,17 +502,6 @@ function reviewApp(jobId, pdfFilename) {
 
         selectRegion(region) {
             this.selectedRegion = region;
-            
-            const container = this.$refs.container.querySelector(`[data-page="${region.page}"]`);
-            if (container) {
-                const rect = container.getBoundingClientRect();
-                const viewRect = this.$refs.container.getBoundingClientRect();
-                
-                // Scroll if fully or partially out of view
-                if (rect.top < viewRect.top || rect.bottom > viewRect.bottom) {
-                    container.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }
-            }
         },
 
         async generateRegionAltText(region) {
@@ -604,7 +590,7 @@ function reviewApp(jobId, pdfFilename) {
             this.isExporting = true;
 
             try {
-                const resultsPayload = this.sortedRegions.map(r => ({
+                const resultsPayload = this.regions.map(r => ({
                     id: r.id,
                     page: r.page,
                     x0_pct: r.x0_pct,

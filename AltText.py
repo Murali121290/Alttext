@@ -141,7 +141,7 @@ def query_db(query, args=(), one=False, commit=False, return_id=False, conn=None
         return res
         
     except Exception as e:
-        print(f"Query Failed: {query} | Args: {args} | Error: {e}")
+        print(f"Query Failed: {query} | Args: {args} |  Error: {e}")
         raise e
 
 def init_db():
@@ -1093,6 +1093,9 @@ import uuid as _uuid
 MARKUP_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "markup_sessions")
 os.makedirs(MARKUP_FOLDER, exist_ok=True)
 
+# PDF is the only supported viewer type
+_ALLOWED_UPLOAD_EXTS = {"pdf"}
+
 
 @app.route("/markup")
 @login_required
@@ -1106,24 +1109,28 @@ def markup_upload():
     f = request.files.get("file")
     if not f or not f.filename:
         return jsonify({"error": "No file uploaded"}), 400
-    if not f.filename.lower().endswith(".pdf"):
-        return jsonify({"error": "Only PDF files are supported"}), 400
+    raw_name = sanitize_filename(f.filename)
+    file_ext = raw_name.rsplit(".", 1)[-1].lower() if "." in raw_name else ""
+    if file_ext not in _ALLOWED_UPLOAD_EXTS:
+        return jsonify({"error": "Only PDF files are supported."}), 400
 
     session_id = str(_uuid.uuid4())
     session_dir = os.path.join(MARKUP_FOLDER, session_id)
     os.makedirs(session_dir, exist_ok=True)
 
-    pdf_path = os.path.join(session_dir, "source.pdf")
-    f.save(pdf_path)
-    # Store original filename so the output Excel can use it
+    doc_path = os.path.join(session_dir, f"source.{file_ext}")
+    f.save(doc_path)
+    # Store original filename for display / export
     with open(os.path.join(session_dir, "source_name.txt"), "w", encoding="utf-8") as _fn:
-        _fn.write(sanitize_filename(f.filename))
+        _fn.write(raw_name)
+
+    page_count = 1
+    pages_meta = []
+    pre_regions = []
 
     try:
-        doc = fitz.open(pdf_path)
+        doc = fitz.open(doc_path)
         page_count = len(doc)
-        pages_meta = []
-        # PDF.js renders pages client-side — no server-side PNG conversion needed
         for i in range(len(doc)):
             page = doc[i]
             pages_meta.append({
@@ -1131,21 +1138,8 @@ def markup_upload():
                 "width_pt": page.rect.width,
                 "height_pt": page.rect.height,
             })
-        # --- Detect existing PDF annotations and convert to pre-populated regions ---
-        _MARKUP_ANNOT_TYPES = {
-            0,   # Text (sticky note / comment)
-            2,   # FreeText (callout / text box)
-            4,   # Square / Rectangle
-            5,   # Circle
-            8,   # Highlight
-            9,   # Underline
-            10,  # Squiggly
-            11,  # StrikeOut
-            13,  # Stamp
-            15,  # Ink (freehand)
-            20,  # Polygon
-        }
-        pre_regions = []
+        # Detect existing PDF annotations → pre-populated regions
+        _MARKUP_ANNOT_TYPES = {0, 2, 4, 5, 8, 9, 10, 11, 13, 15, 20}
         annot_counter = 0
         for i in range(len(doc)):
             page = doc[i]
@@ -1155,7 +1149,6 @@ def markup_upload():
                 if annot.type[0] not in _MARKUP_ANNOT_TYPES:
                     continue
                 r = annot.rect
-                # Skip degenerate / invisible rects (< 0.3 % of page in either dimension)
                 if pw == 0 or ph == 0:
                     continue
                 if (r.width / pw) < 0.003 or (r.height / ph) < 0.003:
@@ -1171,7 +1164,6 @@ def markup_upload():
                     "y1_pct": r.y1 / ph,
                     "label": label,
                 })
-
         doc.close()
     except Exception as e:
         logger.error(f"Markup upload failed: {e}", exc_info=True)
@@ -1182,21 +1174,26 @@ def markup_upload():
         "page_count": page_count,
         "pages": pages_meta,
         "pre_regions": pre_regions,
+        "file_ext": file_ext
     })
 
 
-@app.route("/api/markup/pdf/<session_id>")
+@app.route("/api/markup/doc/<session_id>")
 @login_required
-def markup_serve_pdf(session_id):
-    """Serve the raw PDF so PDF.js can render it client-side."""
+def markup_serve_doc(session_id):
+    """Serve the uploaded PDF so the browser can render it via PDF.js."""
     if not re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', session_id, re.IGNORECASE):
         return jsonify({"error": "Invalid session"}), 400
-    pdf_path = os.path.join(MARKUP_FOLDER, session_id, "source.pdf")
-    real_path = os.path.realpath(pdf_path)
+
+    session_dir = os.path.join(MARKUP_FOLDER, session_id)
+    doc_path = os.path.join(session_dir, "source.pdf")
+    real_path = os.path.realpath(doc_path)
+
     if not real_path.startswith(os.path.realpath(MARKUP_FOLDER)):
         return jsonify({"error": "Access denied"}), 403
     if not os.path.exists(real_path):
         return jsonify({"error": "Not found"}), 404
+
     return send_file(real_path, mimetype="application/pdf")
 
 
@@ -1366,8 +1363,11 @@ def review_page(job_id):
     if not job:
         flash("Job not found", "error")
         return flask_redirect("/batches")
-        
-    return render_template("review.html", title="Review Tool", active_page="batches", job_id=job_id, pdf_filename=job['filename'])
+
+    doc_filename = job['filename']
+
+    return render_template("review.html", title="Review Tool", active_page="batches",
+                           job_id=job_id, pdf_filename=doc_filename)
 
 import base64
 import openpyxl
@@ -1439,21 +1439,29 @@ def get_job_review_data(job_id):
         logger.error(f"Error parsing job data: {e}", exc_info=True)
         return jsonify({"error": "Failed to load job data. Please try again."}), 500
 
-@app.route("/api/job/<int:job_id>/pdf", methods=["GET"])
-@login_required
-def serve_job_pdf(job_id):
+@app.route("/api/job/<int:job_id>/doc", methods=["GET"])
+def serve_job_doc(job_id):
     job = query_db("SELECT * FROM jobs WHERE id = %s", (job_id,), one=True)
     if not job:
         return jsonify({"error": "Job not found"}), 404
         
-    if not job['filename'].lower().endswith('.pdf'):
-        return jsonify({"error": "no_pdf"}), 404
+    filename = job['filename']
+    doc_path = os.path.join(UPLOAD_FOLDER, filename)
+    if not os.path.exists(doc_path):
+        return jsonify({"error": "Document not found on server"}), 404
 
-    pdf_path = os.path.join(UPLOAD_FOLDER, job['filename'])
-    if not os.path.exists(pdf_path):
-        return jsonify({"error": "PDF not found on server"}), 404
-
-    return send_file(pdf_path, mimetype="application/pdf")
+    ext = filename.split('.')[-1].lower()
+    mime_map = {
+        "pdf": "application/pdf",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "doc": "application/msword",
+        "xls": "application/vnd.ms-excel",
+        "ppt": "application/vnd.ms-powerpoint",
+    }
+    mime = mime_map.get(ext, "application/octet-stream")
+    return send_file(doc_path, mimetype=mime)
 
 @app.route("/api/job/<int:job_id>/update", methods=["POST"])
 @login_required

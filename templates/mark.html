@@ -1,214 +1,327 @@
 {% extends "base.html" %}
 
+{% block main_class %}p-0{% endblock %}
+
 {% block content %}
-<script src="/static/js/pdf.min.js"></script>
+<script src="/static/js/pdf.min.js?v=3.11.174"></script>
 <script>
-    pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/js/pdf.worker.min.js';
+    if (typeof pdfjsLib === 'undefined') {
+        console.error('[PDF.js] pdf.min.js failed to load from /static/js/pdf.min.js');
+    } else {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/js/pdf.worker.min.js?v=3.11.174';
+        console.log('[PDF.js] version loaded:', pdfjsLib.version);
+    }
 </script>
 
-<div x-data="markupApp()" @keydown.window.ctrl.z.prevent="undoLastRegion()" class="h-[calc(100vh-80px)] overflow-hidden flex flex-col md:flex-row gap-4 p-4 relative w-full">
+<div x-data="markupApp()" @keydown.window.ctrl.z.prevent="undoLastRegion()" class="w-full bg-slate-50 flex flex-col" style="height: calc(100vh - 64px); min-height: 600px;">
 
-    <!-- Sidebar: Upload & List of Regions -->
-    <div class="w-full md:w-1/3 bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col overflow-hidden max-h-full">
-        <div class="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center shrink-0">
-            <h2 class="font-bold text-slate-800">Markup Tools</h2>
-            <div class="flex gap-2">
-                <button @click="sortRegions()" title="Sort by Page" class="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-xs transition-colors flex items-center gap-1 shadow-sm font-medium">
-                    <i data-lucide="arrow-up-down" class="w-3 h-3 pointer-events-none"></i> Sort
-                </button>
-                <button @click="refreshLucide()" title="Refresh" class="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-xs transition-colors flex items-center gap-1 shadow-sm font-medium">
-                    <i data-lucide="refresh-cw" class="w-3 h-3 pointer-events-none"></i> Refresh
-                </button>
-                <button @click="undoLastRegion()" :disabled="!canUndo" title="Undo Last Box (Ctrl+Z)" class="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-xs disabled:opacity-50 transition-colors flex items-center gap-1 shadow-sm font-medium">
-                    <i data-lucide="undo-2" class="w-3 h-3"></i> Undo
-                </button>
-                <button @click="exportData()" :disabled="!sessionId || regions.length === 0 || isExporting" class="px-3 py-1 rounded text-sm transition-colors shadow-sm font-medium" style="background-color: #059669; color: white;" :style="(!sessionId || regions.length === 0 || isExporting) ? 'opacity: 0.5; cursor: not-allowed;' : 'opacity: 1; cursor: pointer;'">
-                    <span x-text="isExporting ? 'Exporting...' : 'Export to Excel'"></span>
-                </button>
-            </div>
-        </div>
-
-        <!-- Upload State -->
-        <div x-show="!sessionId" class="p-6 flex flex-col items-center justify-center flex-1">
-            <label class="cursor-pointer group w-full">
-                <div class="h-32 w-full border-2 border-dashed border-emerald-300 rounded-xl flex flex-col items-center justify-center bg-emerald-50 group-hover:bg-emerald-100 transition-colors p-6">
-                    <i data-lucide="upload-cloud" class="h-8 w-8 text-emerald-500 mb-2"></i>
-                    <span class="text-sm font-medium text-emerald-700">Select PDF to Markup</span>
+    <!-- Upload State (Full Screen / Centered) -->
+    <div x-show="!sessionId" class="flex-1 flex flex-col items-center justify-center p-6 bg-slate-50 w-full h-full">
+        <div class="max-w-lg w-full bg-white rounded-2xl shadow-xl p-10 text-center border border-slate-100 transition-all duration-300 hover:shadow-2xl">
+            <h2 class="text-3xl font-bold text-slate-800 mb-3 tracking-tight">Upload Document</h2>
+            <p class="text-slate-500 mb-8 text-sm">Select a PDF document to begin the alt-text markup process.</p>
+            
+            <label class="cursor-pointer group block w-full">
+                <div class="h-56 w-full border-2 border-dashed border-emerald-300 rounded-xl flex flex-col items-center justify-center bg-emerald-50/50 group-hover:bg-emerald-100/50 group-hover:border-emerald-400 transition-all duration-200 p-6">
+                    <div class="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mb-4 group-hover:-translate-y-1 transition-transform duration-200 shadow-sm">
+                        <i data-lucide="upload-cloud" class="h-8 w-8"></i>
+                    </div>
+                    <span class="font-semibold text-emerald-700 text-lg">Click to browse</span>
+                    <span class="text-xs text-emerald-600/70 mt-1 font-medium">PDF files only</span>
                 </div>
-                <input type="file" class="hidden" accept=".pdf" @change="uploadPDF($event)" :disabled="isUploading">
+                <input type="file" class="hidden" accept=".pdf" @change="uploadDocument($event)" :disabled="isUploading">
             </label>
-            <p x-show="isUploading" class="mt-4 text-sm text-slate-500 flex items-center gap-2"><i data-lucide="loader-2" class="animate-spin w-4 h-4"></i> Uploading and processing...</p>
-        </div>
-
-        <!-- Regions List -->
-        <div x-show="sessionId" class="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50" x-cloak>
-            <template x-for="region in sortedRegions" :key="region.id">
-                <div class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm relative group cursor-pointer transition-shadow" 
-                     :class="{'ring-2 ring-emerald-500': selectedRegion && selectedRegion.id === region.id}"
-                     @click="selectRegion(region)">
-                    
-                    <div class="flex items-start justify-between mb-1">
-                        <h3 class="font-semibold text-sm text-slate-700 flex items-center gap-2">
-                            <span class="bg-amber-500 text-white px-1.5 py-0.5 rounded text-[10px]" x-text="'#' + region.id"></span>
-                            <span x-text="'Page ' + (region.page + 1)"></span>
-                        </h3>
-                        <button @click.stop="deleteRegion(region.id)" title="Delete Region" class="text-red-500 hover:text-red-700 transition-colors bg-red-50 hover:bg-red-100 rounded p-1.5 border border-red-100 flex-shrink-0">
-                            <i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i>
-                        </button>
-                    </div>
-                    <p class="text-xs text-slate-500 mb-2 truncate" x-text="region.label || 'User Drawn Region'"></p>
-
-                    <!-- Generating State -->
-                    <div x-show="region.isLoading" class="text-xs text-emerald-600 flex items-center gap-2 py-2">
-                        <i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Generating alt text...
-                    </div>
-                    
-                    <!-- Content State -->
-                    <div x-show="!region.isLoading" class="space-y-3 mt-2">
-                        <div>
-                            <span class="text-[10px] font-bold uppercase text-slate-400">Short Alt</span>
-                            <textarea x-model="region.short_alt" rows="2" class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-slate-50 mt-1 focus:ring-emerald-500 focus:border-emerald-500 transition-colors"></textarea>
-                        </div>
-                        <div>
-                            <span class="text-[10px] font-bold uppercase text-slate-400">Long Alt</span>
-                            <textarea x-model="region.long_alt" rows="3" class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-slate-50 mt-1 focus:ring-emerald-500 focus:border-emerald-500 transition-colors"></textarea>
-                        </div>
-                        
-                        <!-- Crop Preview if available -->
-                        <div x-show="region.crop_png_b64" class="mt-2 bg-slate-100 p-2 rounded border border-slate-200 flex justify-center">
-                            <img :src="'data:image/png;base64,' + region.crop_png_b64" style="max-height: 120px; max-width: 100%; object-fit: contain;" class="rounded shadow-sm" alt="Region Crop">
-                        </div>
-
-                        <!-- Refine Block -->
-                        <div class="flex gap-2 items-center mt-2 border-t pt-3">
-                            <input type="text" x-model="region.refinePrompt" placeholder="Refinement prompt..." class="flex-1 text-xs px-2 py-1.5 border border-slate-200 rounded outline-none focus:border-emerald-500" @keydown.enter.prevent="refineRegion(region)">
-                            <button @click="refineRegion(region)" class="px-3 py-1.5 bg-slate-800 text-white rounded text-[10px] whitespace-nowrap hover:bg-slate-700 transition-colors flex items-center gap-1" :disabled="region.isRefining">
-                                <i x-show="region.isRefining" data-lucide="loader-2" class="w-3 h-3 animate-spin"></i>
-                                <span x-text="region.isRefining ? 'Refining...' : 'Refine'"></span>
-                            </button>
-                        </div>
-                    </div>
+            <div x-show="isUploading" class="mt-8 flex flex-col items-center gap-3">
+                <div class="p-3 bg-emerald-50 rounded-full">
+                    <i data-lucide="loader-2" class="animate-spin w-6 h-6 text-emerald-600"></i>
                 </div>
-            </template>
-            <div x-show="regions.length === 0" class="text-center text-slate-500 text-sm mt-10">
-                Draw regions on the PDF to generate alt text.
+                <p class="text-sm font-medium text-slate-600">Uploading and processing document...</p>
             </div>
         </div>
     </div>
 
-    <!-- Main Content: Continuous PDF Canvas -->
-    <div class="w-full md:w-2/3 bg-slate-200/50 rounded-2xl shadow-inner border border-slate-200 overflow-hidden flex flex-col relative" x-show="sessionId" x-cloak>
-        <!-- Toolbar -->
-        <div class="p-3 bg-white border-b border-slate-200 flex justify-between items-center shadow-sm z-10 shrink-0">
-            <div class="flex items-center gap-2">
-                <button @click="scrollToPage(currentPage - 1)" :disabled="currentPage <= 0" class="p-1.5 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-50 transition-colors" title="Previous Page"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
-                <span class="text-sm font-medium text-slate-700 flex items-center gap-1">
-                    Page 
-                    <input type="number" :value="currentPage + 1" @change="scrollToPage($event.target.value - 1)" class="w-12 text-center border border-slate-200 rounded p-0.5 focus:ring-emerald-500 focus:border-emerald-500 outline-none" min="1" :max="pageCount"> 
-                    of <span x-text="pageCount"></span>
-                </span>
-                <button @click="scrollToPage(currentPage + 1)" :disabled="currentPage >= pageCount - 1" class="p-1.5 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-50 transition-colors" title="Next Page"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
-            </div>
-            <div class="flex items-center gap-2">
-                <button @click="zoomOut()" class="p-1.5 rounded bg-slate-100 hover:bg-slate-200 transition-colors" title="Zoom Out"><i data-lucide="zoom-out" class="w-4 h-4"></i></button>
-                <span class="text-sm font-medium w-16 text-center" x-text="Math.round(scale * 100) + '%'"></span>
-                <button @click="zoomIn()" class="p-1.5 rounded bg-slate-100 hover:bg-slate-200 transition-colors" title="Zoom In"><i data-lucide="zoom-in" class="w-4 h-4"></i></button>
-            </div>
-        </div>
+    <!-- The Split View (Only shown when sessionId exists) -->
+    <div class="flex-1 w-full flex flex-col md:flex-row opacity-0 transition-opacity duration-300 overflow-hidden" :class="{ 'opacity-100': sessionId }" x-show="sessionId" x-cloak>
 
-        <!-- Scrollable Stacked Canvas Area -->
-        <div class="flex-1 overflow-auto p-4 flex flex-col items-center bg-slate-300 relative" x-ref="container" @scroll.passive="onScroll">
-            <div class="w-full max-w-full flex flex-col items-center">
-                <template x-for="(pageMeta, index) in pages" :key="index">
-                    <div class="relative shadow-xl bg-white mb-6 border border-slate-200" 
-                         :data-page="index" 
-                         :style="`width: ${pageMeta.width_pt * scale}px; height: ${pageMeta.height_pt * scale}px;`">
+        <!-- Sidebar: List of Regions -->
+        <div id="sidebar-pane" class="w-full md:w-1/3 bg-white flex flex-col overflow-hidden h-full z-10 border-r border-slate-200 shadow-[4px_0_24px_-12px_rgba(0,0,0,0.1)] relative">
+            <div class="p-4 border-b border-slate-200 bg-white flex justify-between items-center shrink-0">
+                <h2 class="font-bold text-slate-800 flex flex-col md:flex-row items-start md:items-center gap-2">
+                    <span class="text-lg tracking-tight">Markup Tools</span>
+                </h2>
+                <div class="flex gap-2">
+                    <button @click="undoLastRegion()" :disabled="!canUndo" title="Undo Last Box (Ctrl+Z)" class="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs disabled:opacity-50 transition-colors flex items-center gap-1.5 font-medium border border-slate-200">
+                        <i data-lucide="undo-2" class="w-3.5 h-3.5 pointer-events-none"></i> Undo
+                    </button>
+                    <button @click="sortRegions()" title="Sort by Page" class="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs transition-colors flex items-center gap-1.5 font-medium border border-slate-200">
+                        <i data-lucide="arrow-up-down" class="w-3.5 h-3.5 pointer-events-none"></i> Sort
+                    </button>
+                    <button @click="exportData()" :disabled="!sessionId || regions.length === 0 || isExporting" class="px-4 py-1.5 rounded-lg text-xs transition-all font-medium border" :class="(!sessionId || regions.length === 0 || isExporting) ? 'bg-emerald-50 text-emerald-300 border-emerald-100 cursor-not-allowed' : 'bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700 shadow-sm'">
+                        <span x-text="isExporting ? 'Exporting...' : 'Export to Excel'"></span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Regions List -->
+            <div class="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/50">
+                <template x-for="region in regions" :key="region.id">
+                    <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm relative group cursor-pointer transition-all hover:border-emerald-300 hover:shadow-md" 
+                         :class="{'ring-2 ring-emerald-500 border-emerald-500': selectedRegion && selectedRegion.id === region.id}"
+                         @click="$event.target.closest('button') || selectRegion(region)">
                         
-                        <canvas :id="'canvas-' + index" class="pdf-canvas block w-full h-full"></canvas>
+                        <div class="flex items-center justify-between mb-3 pb-2 border-b border-slate-100">
+                            <h3 class="font-semibold text-sm text-slate-700 flex items-center gap-2">
+                                <span class="text-white px-2 py-0.5 rounded-md text-[10px] font-bold shadow-sm" :style="`background-color: ${region.color || '#f59e0b'}`" x-text="'#' + region.id"></span>
+                                <span class="text-slate-500" x-text="'Page ' + (region.page + 1)"></span>
+                            </h3>
+                            <div class="flex items-center gap-2">
+                                <div class="relative w-6 h-6 rounded-md overflow-hidden border border-slate-200 shadow-sm cursor-pointer hover:border-slate-300 transition-colors" title="Region colour">
+                                    <input type="color" :value="region.color || '#f59e0b'" @input="region.color = $event.target.value" class="absolute -top-2 -left-2 w-10 h-10 cursor-pointer">
+                                </div>
+                                <button @click.prevent.stop="deleteRegion(region.id)" type="button" title="Delete Region" class="text-red-500 hover:text-red-700 transition-colors bg-white hover:bg-red-50 rounded-md p-1.5 border border-slate-200 hover:border-red-200 flex-shrink-0 shadow-sm">
+                                    <i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Generating State -->
+                        <div x-show="region.isLoading" class="text-sm text-emerald-600 flex items-center gap-3 py-4 justify-center bg-emerald-50/50 rounded-lg border border-emerald-100">
+                            <i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i>
+                            <span class="font-medium">Generating alt text...</span>
+                        </div>
                         
-                        <!-- Drawing Overlay -->
-                        <div class="absolute inset-0 z-20 cursor-crosshair" 
-                             @mousedown="startDraw($event, index)" 
-                             @mousemove="draw($event, index)" 
-                             @mouseup="endDraw($event, index)" 
-                             @mouseleave="endDraw($event, index)">
-                             
-                            <!-- Current Drawing Box -->
-                            <div x-show="isDrawing && drawingPage === index" 
-                                 class="absolute border-2 border-emerald-500 bg-emerald-500/20"
-                                 :style="`left: ${drawBox.x}px; top: ${drawBox.y}px; width: ${drawBox.w}px; height: ${drawBox.h}px;`">
+                        <!-- Content State -->
+                        <div x-show="!region.isLoading" class="space-y-4 mt-2">
+                            <div>
+                                <label class="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block flex items-center gap-1.5">
+                                    <i data-lucide="align-left" class="w-3 h-3"></i> Short Alt
+                                </label>
+                                <textarea x-model="region.short_alt" rows="2" class="w-full text-sm p-3 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all outline-none resize-none shadow-inner text-slate-700 placeholder-slate-400" placeholder="Brief description..."></textarea>
+                            </div>
+                            <div>
+                                <label class="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block flex items-center gap-1.5">
+                                    <i data-lucide="align-justify" class="w-3 h-3"></i> Long Alt
+                                </label>
+                                <textarea x-model="region.long_alt" rows="3" class="w-full text-sm p-3 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all outline-none resize-none shadow-inner text-slate-700 placeholder-slate-400" placeholder="Detailed description..."></textarea>
+                            </div>
+                            
+                            <!-- Crop Preview if available -->
+                            <div x-show="region.crop_png_b64" class="mt-3 bg-white p-2 rounded-xl border border-slate-200 shadow-sm flex justify-center group-hover:border-emerald-200 transition-colors">
+                                <img :src="'data:image/png;base64,' + region.crop_png_b64" style="max-height: 140px; max-width: 100%; object-fit: contain;" class="rounded-lg" alt="Region Crop">
                             </div>
 
-                            <!-- Existing Regions -->
-                            <template x-for="r in getPageRegions(index)" :key="r.id">
-                                <div class="absolute border-2 transition-all cursor-pointer hover:bg-blue-500/10"
-                                     :class="selectedRegion && selectedRegion.id === r.id ? 'border-blue-500 bg-blue-500/20 z-30' : 'border-amber-500 hover:border-blue-400 z-10'"
-                                     :style="`left: ${r.x0_pct * 100}%; top: ${r.y0_pct * 100}%; width: ${(r.x1_pct - r.x0_pct) * 100}%; height: ${(r.y1_pct - r.y0_pct) * 100}%;`"
-                                     @click.stop="selectRegion(r)">
-                                     <div class="absolute -top-6 left-0 text-white text-[10px] px-1.5 py-0.5 rounded shadow whitespace-nowrap"
-                                          :class="selectedRegion && selectedRegion.id === r.id ? 'bg-blue-600' : 'bg-amber-500'"
-                                          x-text="'#' + r.id"></div>
+                            <!-- Refine Block -->
+                            <div class="flex gap-2 items-center mt-4 pt-3 border-t border-slate-100">
+                                <div class="relative flex-1">
+                                    <i data-lucide="sparkles" class="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
+                                    <input type="text" x-model="region.refinePrompt" placeholder="Ask AI to refine..." class="w-full text-sm pl-9 pr-3 py-2 border border-slate-200 rounded-lg outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 bg-slate-50 focus:bg-white transition-all placeholder-slate-400" @keydown.enter.prevent="refineRegion(region)">
                                 </div>
-                            </template>
+                                <button @click="refineRegion(region)" class="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm whitespace-nowrap hover:bg-slate-700 transition-colors flex items-center gap-2 font-medium shadow-sm" :disabled="region.isRefining">
+                                    <i x-show="region.isRefining" data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>
+                                    <span x-text="region.isRefining ? 'Refining...' : 'Refine'"></span>
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </template>
+                <div x-show="regions.length === 0" class="text-center text-slate-500 text-sm mt-12 flex flex-col items-center gap-3 bg-white p-6 rounded-xl border border-slate-200 border-dashed">
+                    <div class="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center">
+                        <i data-lucide="mouse-pointer-square-dashed" class="w-6 h-6 text-slate-400"></i>
+                    </div>
+                    <span>Draw annotations on the document to begin generating alt text.</span>
+                </div>
             </div>
         </div>
+
+        <!-- Main Content: PDF Viewer -->
+        <div id="pdf-pane" class="w-full md:w-2/3 flex flex-col h-full z-0 relative bg-slate-200">
+            <!-- Toolbar -->
+            <div class="p-3 bg-white border-b border-slate-200 flex justify-between items-center shadow-[0_4px_24px_-12px_rgba(0,0,0,0.1)] z-10 shrink-0">
+                <div class="flex items-center gap-2">
+                    <button @click="scrollToPage(currentPage - 1)" :disabled="currentPage <= 0" class="p-2 rounded-lg bg-slate-50 hover:bg-slate-100 disabled:opacity-50 transition-colors border border-slate-200" title="Previous Page"><i data-lucide="chevron-left" class="w-4 h-4 text-slate-600"></i></button>
+                    <div class="flex items-center gap-2 px-3 py-1.5 bg-slate-50 rounded-lg border border-slate-200">
+                        <span class="text-sm font-medium text-slate-600">Page</span>
+                        <input type="number" :value="currentPage + 1" @change="scrollToPage($event.target.value - 1)" class="w-12 text-center bg-white border border-slate-300 rounded focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none text-sm font-semibold py-0.5" min="1" :max="pageCount"> 
+                        <span class="text-sm font-medium text-slate-400">of</span>
+                        <span class="text-sm font-semibold text-slate-700" x-text="pageCount"></span>
+                    </div>
+                    <button @click="scrollToPage(currentPage + 1)" :disabled="currentPage >= pageCount - 1" class="p-2 rounded-lg bg-slate-50 hover:bg-slate-100 disabled:opacity-50 transition-colors border border-slate-200" title="Next Page"><i data-lucide="chevron-right" class="w-4 h-4 text-slate-600"></i></button>
+                </div>
+                <div class="flex items-center gap-1.5 bg-slate-50 p-1 rounded-lg border border-slate-200">
+                    <button @click="zoomOut()" class="p-1.5 rounded-md hover:bg-white hover:shadow-sm transition-all" title="Zoom Out"><i data-lucide="zoom-out" class="w-4 h-4 text-slate-600"></i></button>
+                    <span class="text-sm font-semibold w-14 text-center text-slate-700" x-text="Math.round(scale * 100) + '%'"></span>
+                    <button @click="zoomIn()" class="p-1.5 rounded-md hover:bg-white hover:shadow-sm transition-all" title="Zoom In"><i data-lucide="zoom-in" class="w-4 h-4 text-slate-600"></i></button>
+                </div>
+            </div>
+
+            <!-- Page-by-page Canvas Area -->
+            <div class="flex-1 overflow-auto p-6 flex flex-col items-center bg-slate-200 relative h-full shadow-inner" x-ref="container">
+                <div class="w-full max-w-full flex flex-col items-center">
+                    <template x-for="(pageMeta, index) in pages" :key="index">
+                        <div class="relative bg-white shadow-2xl transition-all duration-300 mb-8 rounded-sm"
+                             x-show="index === currentPage"
+                             :data-page="index"
+                             :style="`width: ${pageMeta.width_pt * scale}px; height: ${pageMeta.height_pt * scale}px;`">
+                            <canvas :id="'canvas-' + index" class="pdf-canvas block w-full h-full rounded-sm"></canvas>
+                            <!-- Drawing Overlay -->
+                            <div class="absolute inset-0 z-20 cursor-crosshair" 
+                                 @mousedown="startDraw($event, index)" 
+                                 @mousemove="draw($event, index)" 
+                                 @mouseup="endDraw($event, index)" 
+                                 @mouseleave="endDraw($event, index)">
+                                <div x-show="isDrawing && drawingPage === index" 
+                                     class="absolute border-2 border-emerald-500 bg-emerald-500/20 backdrop-blur-[1px]"
+                                     :style="`left: ${drawBox.x}px; top: ${drawBox.y}px; width: ${drawBox.w}px; height: ${drawBox.h}px;`">
+                                </div>
+                                <template x-for="r in getPageRegions(index)" :key="r.id">
+                                    <div class="absolute border-[2.5px] cursor-pointer group hover:bg-white/10"
+                                         :class="selectedRegion && selectedRegion.id === r.id ? 'z-30 ring-2 ring-white/50 shadow-lg' : 'z-10'"
+                                         :style="`left: ${r.x0_pct * 100}%; top: ${r.y0_pct * 100}%; width: ${(r.x1_pct - r.x0_pct) * 100}%; height: ${(r.y1_pct - r.y0_pct) * 100}%; border-color: ${r.color || '#f59e0b'}; background-color: ${r.color || '#f59e0b'}15;`"
+                                         @click.stop="selectRegion(r)">
+                                         <div class="absolute -top-7 left-0 text-white text-[11px] font-bold px-2 py-0.5 rounded shadow-sm whitespace-nowrap origin-bottom-left"
+                                              :style="`background-color: ${r.color || '#f59e0b'}`"
+                                              :class="selectedRegion && selectedRegion.id === r.id ? 'scale-110' : ''"
+                                              x-text="'#' + r.id"></div>
+                                         <!-- Resize handles (visible only when selected) -->
+                                         <template x-if="selectedRegion && selectedRegion.id === r.id">
+                                             <div>
+                                                 <template x-for="h in ['nw','n','ne','w','e','sw','s','se']" :key="h">
+                                                     <div class="absolute w-4 h-4 bg-white border-2 border-emerald-500 rounded-full z-40 shadow-sm"
+                                                          :style="handleStyle(h)"
+                                                          :class="handleCursor(h)"
+                                                          @mousedown.stop="startResize($event, r, h, index)">
+                                                     </div>
+                                                 </template>
+                                             </div>
+                                         </template>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+
     </div>
 </div>
 
 <script>
-function markupApp() {
-    let pdfDoc = null;
-    let observer = null;
-    let renderedPages = new Set();
-    let renderingPages = new Set();
-    let pendingRenderQueue = new Set();
+// pdfDoc stored OUTSIDE Alpine's reactive scope to avoid Proxy wrapping,
+// which breaks pdf.js's private class fields (#d, #pagePromises, etc.)
+// See: https://github.com/mozilla/pdf.js/discussions/17326
+window._markupPdfDoc = null;
 
+function markupApp() {
     return {
         sessionId: null,
-        pdfFilename: null,
+        filename: null,
+        fileExt: 'pdf',             // tracked so we can branch on non-PDF uploads
         isUploading: false,
         isExporting: false,
+        isProcessing: false,
+        regions: [],
+        splitInstance: null,
+        selectedRegion: null,
+
+        // PDF js variables
         pageCount: 0,
         pages: [],
-        regions: [],
-        
         scale: 1.5,
         currentPage: 0,
-
         isDrawing: false,
         drawingPage: null,
         startX: 0,
         startY: 0,
         drawBox: {x: 0, y: 0, w: 0, h: 0},
-        
         regionCounter: 0,
-        selectedRegion: null,
 
-        get currentPageRegions() {
-            return this.sortedRegions.filter(r => r.page === this.currentPage);
-        },
+        // Resize state
+        isResizing: false,
+        resizeHandle: null,
+        resizingRegionId: null,
+        resizeStartX: 0,
+        resizeStartY: 0,
+        resizePageRect: null,
+        resizeStartBox: null,
 
-        get sortedRegions() {
-            // Sort by page first, then by vertical (Y) position on the page
-            return [...this.regions].sort((a, b) => {
-                if (a.page !== b.page) return a.page - b.page;
-                return a.y0_pct - b.y0_pct;
-            });
-        },
-
-        get canUndo() {
-            return this.regions.some(r => r.isUserDrawn);
-        },
-
+        get canUndo() { return this.regions.some(r => r.isUserDrawn); },
         undoLastRegion() {
             for (let i = this.regions.length - 1; i >= 0; i--) {
                 if (this.regions[i].isUserDrawn) {
                     this.deleteRegion(this.regions[i].id);
                     break;
                 }
+            }
+        },
+        getPageRegions(pageIndex) {
+            return this.regions.filter(r => r.page === pageIndex && r.x0_pct != null);
+        },
+
+        handleStyle(h) {
+            const pos = {
+                nw: 'top:-8px;left:-8px', n: 'top:-8px;left:calc(50% - 8px)', ne: 'top:-8px;right:-8px',
+                w:  'top:calc(50% - 8px);left:-8px',                           e: 'top:calc(50% - 8px);right:-8px',
+                sw: 'bottom:-8px;left:-8px', s: 'bottom:-8px;left:calc(50% - 8px)', se: 'bottom:-8px;right:-8px'
+            };
+            return pos[h] || '';
+        },
+        handleCursor(h) {
+            const cursors = { nw: 'cursor-nw-resize', n: 'cursor-n-resize', ne: 'cursor-ne-resize',
+                              w: 'cursor-w-resize', e: 'cursor-e-resize',
+                              sw: 'cursor-sw-resize', s: 'cursor-s-resize', se: 'cursor-se-resize' };
+            return cursors[h] || '';
+        },
+        startResize(e, region, handle, pageIndex) {
+            this.isResizing = true;
+            this.resizeHandle = handle;
+            this.resizingRegionId = region.id;
+            this.resizeStartX = e.clientX;
+            this.resizeStartY = e.clientY;
+            const el = this.$refs.container.querySelector(`[data-page="${pageIndex}"]`);
+            this.resizePageRect = el.getBoundingClientRect();
+            this.resizeStartBox = { x0_pct: region.x0_pct, y0_pct: region.y0_pct, x1_pct: region.x1_pct, y1_pct: region.y1_pct };
+        },
+        doResize(e) {
+            const dx = (e.clientX - this.resizeStartX) / this.resizePageRect.width;
+            const dy = (e.clientY - this.resizeStartY) / this.resizePageRect.height;
+            const region = this.regions.find(r => r.id === this.resizingRegionId);
+            if (!region) return;
+            const b = this.resizeStartBox, h = this.resizeHandle;
+            let x0 = b.x0_pct, y0 = b.y0_pct, x1 = b.x1_pct, y1 = b.y1_pct;
+            if (h.includes('n')) y0 = Math.min(b.y0_pct + dy, b.y1_pct - 0.01);
+            if (h.includes('s')) y1 = Math.max(b.y1_pct + dy, b.y0_pct + 0.01);
+            if (h.includes('w')) x0 = Math.min(b.x0_pct + dx, b.x1_pct - 0.01);
+            if (h.includes('e')) x1 = Math.max(b.x1_pct + dx, b.x0_pct + 0.01);
+            region.x0_pct = Math.max(0, x0); region.y0_pct = Math.max(0, y0);
+            region.x1_pct = Math.min(1, x1); region.y1_pct = Math.min(1, y1);
+        },
+        endResize() {
+            if (this.resizingRegionId) {
+                const region = this.regions.find(r => r.id === this.resizingRegionId);
+                if (region) {
+                    this.generateRegionAltText(region);
+                }
+            }
+            this.isResizing = false;
+            this.resizeHandle = null;
+            this.resizingRegionId = null;
+            this.resizeStartBox = null;
+            this.resizePageRect = null;
+        },
+
+
+        initSplit() {
+            if (window.Split && !this.splitInstance && window.innerWidth >= 768) {
+                this.splitInstance = Split(['#sidebar-pane', '#pdf-pane'], {
+                    sizes: [33, 67],
+                    minSize: [280, 300],
+                    gutterSize: 6,
+                    cursor: 'col-resize',
+                    onDragEnd: () => {
+                        window.dispatchEvent(new Event('resize'));
+                    }
+                });
             }
         },
 
@@ -220,10 +333,6 @@ function markupApp() {
             this.refreshLucide();
         },
 
-        getPageRegions(pageIndex) {
-            return this.regions.filter(r => r.page === pageIndex);
-        },
-
         refreshLucide() {
             setTimeout(() => {
                 if(window.lucide) {
@@ -232,15 +341,16 @@ function markupApp() {
             }, 50);
         },
 
-        async uploadPDF(e) {
+        async uploadDocument(e) {
             const file = e.target.files[0];
             if(!file) return;
             this.isUploading = true;
-            this.pdfFilename = file.name;
-            
+            this.filename = file.name;
+            this.fileExt = (file.name.includes('.') ? file.name.split('.').pop() : 'pdf').toLowerCase();
+
             const fd = new FormData();
             fd.append('file', file);
-            
+
             try {
                 const res = await fetch('/api/markup/upload', {
                     method: 'POST',
@@ -249,27 +359,35 @@ function markupApp() {
                 });
                 const data = await res.json();
                 if(data.error) throw new Error(data.error);
-                
+
                 this.sessionId = data.session_id;
-                this.pageCount = data.page_count;
-                this.pages = data.pages;
+                this.fileExt = (data.file_ext || this.fileExt).toLowerCase();
                 this.regions = (data.pre_regions || []).map(r => ({
-                    ...r, 
-                    short_alt: '', 
-                    long_alt: '', 
+                    ...r,
+                    short_alt: '',
+                    long_alt: '',
                     crop_png_b64: null,
-                    isLoading: false, 
-                    isRefining: false, 
+                    isLoading: false,
+                    isRefining: false,
                     refinePrompt: '',
-                    isUserDrawn: false
+                    color: '#f59e0b'
                 }));
+
                 this.regionCounter = Math.max(0, ...this.regions.map(r => r.id));
-                
+                this.pageCount = data.page_count;
+                this.pages = data.pages || [];
+
+                await this.$nextTick();
                 await this.loadPDF();
-                
+
                 // Trigger auto-generate for pre-regions asynchronously
                 this.regions.forEach(r => this.generateRegionAltText(r));
                 this.refreshLucide();
+                
+                // Initialize the split view after we have a sessionId and layout is shown
+                this.$nextTick(() => {
+                    this.initSplit();
+                });
             } catch(err) {
                 alert("Upload failed: " + err.message);
             } finally {
@@ -277,221 +395,117 @@ function markupApp() {
             }
         },
 
+        
         async loadPDF() {
-            const res = await fetch(`/api/markup/pdf/${this.sessionId}`, { credentials: 'same-origin' });
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({ error: res.statusText }));
-                throw new Error(err.error || 'PDF not found');
+            if (typeof pdfjsLib === 'undefined') {
+                alert("PDF.js library is not loaded. Check /static/js/pdf.min.js path.");
+                return;
             }
-            const buffer = await res.arrayBuffer();
-            pdfDoc = await pdfjsLib.getDocument({ data: buffer }).promise;
-            
-            if (observer) {
-                observer.disconnect();
+            window.renderedPages = new Set();
+            window.renderingPages = new Set();
+            try {
+                window._markupPdfDoc = await pdfjsLib.getDocument({
+                    url: `/api/markup/doc/${this.sessionId}`,
+                    cMapUrl: '/static/cmaps/',
+                    cMapPacked: true,
+                    standardFontDataUrl: '/static/standard_fonts/'
+                }).promise;
+            } catch(e) {
+                console.error('[loadPDF] failed:', e);
+                alert('Failed to load PDF: ' + (e.message || e));
+                return;
             }
-            
-            observer = new IntersectionObserver((entries) => {
-                entries.forEach(entry => {
-                    const pageIndex = parseInt(entry.target.dataset.page);
-                    if (entry.isIntersecting) {
-                        this.renderPageIfVisible(pageIndex, entry.target);
-                    }
-                });
-            }, { 
-                root: this.$refs.container, 
-                rootMargin: '800px 0px' 
-            });
 
-            // Page-tracking observer — fires when any page crosses a visibility
-            // threshold, then delegates to onScroll() which picks the page with
-            // the highest intersection ratio (handles partial-overlap correctly)
-            const pageTracker = new IntersectionObserver(() => {
-                this.onScroll();
-            }, {
-                root: this.$refs.container,
-                rootMargin: '0px',
-                threshold: [0, 0.25, 0.5, 0.75, 1.0]
-            });
+            // Fallback: if backend didn't provide page metadata, derive from the PDF itself
+            if (!this.pages || this.pages.length === 0) {
+                this.pageCount = window._markupPdfDoc.numPages;
+                this.pages = [];
+                for (let i = 1; i <= this.pageCount; i++) {
+                    const page = await window._markupPdfDoc.getPage(i);
+                    const viewport = page.getViewport({ scale: 1.0 });
+                    this.pages.push({ width_pt: viewport.width, height_pt: viewport.height });
+                }
+            }
 
-            // Start observing immediately after DOM updates
-            this.$nextTick(() => {
-                const containers = this.$refs.container.querySelectorAll('[data-page]');
-                containers.forEach(el => {
-                    observer.observe(el);
-                    pageTracker.observe(el);
-                });
-                this.onScroll();
-            });
+            this.$nextTick(() => this.renderCurrentPage());
         },
-
         scrollToPage(index) {
             index = parseInt(index);
             if (isNaN(index) || index < 0 || index >= this.pageCount) return;
-            const container = this.$refs.container.querySelector(`[data-page="${index}"]`);
-            if (container) {
-                container.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }
-        },
-
-        onScroll() {
-            if (!pdfDoc) return;
-            const containers = this.$refs.container.querySelectorAll('[data-page]');
-            const containerRect = this.$refs.container.getBoundingClientRect();
-            
-            let closestPage = this.currentPage;
-            let maxVisibleRatio = 0;
-
-            containers.forEach(el => {
-                const rect = el.getBoundingClientRect();
-                
-                // Lazy render check
-                if (rect.top < containerRect.bottom + 800 && rect.bottom > containerRect.top - 800) {
-                    const pageIndex = parseInt(el.dataset.page);
-                    this.renderPageIfVisible(pageIndex, el);
-                }
-
-                // Track which page has the highest intersection ratio in the viewport
-                const visibleTop = Math.max(rect.top, containerRect.top);
-                const visibleBottom = Math.min(rect.bottom, containerRect.bottom);
-                const visibleHeight = Math.max(0, visibleBottom - visibleTop);
-                const pageHeight = rect.height || 1;
-                const ratio = visibleHeight / pageHeight;
-
-                if (ratio > maxVisibleRatio) {
-                    maxVisibleRatio = ratio;
-                    closestPage = parseInt(el.dataset.page);
-                }
+            this.currentPage = index;
+            this.$nextTick(() => {
+                this.$refs.container.scrollTop = 0;
+                this.renderCurrentPage();
             });
-
-            // Update the page number in the top bar as you scroll
-            if (this.currentPage !== closestPage) {
-                this.currentPage = closestPage;
-            }
         },
-
+        renderCurrentPage() {
+            const el = this.$refs.container.querySelector(`[data-page="${this.currentPage}"]`);
+            if (el) this.renderPageIfVisible(this.currentPage, el);
+        },
         async renderPageIfVisible(pageIndex, containerEl) {
-            if (!pdfDoc || renderedPages.has(pageIndex) || renderingPages.has(pageIndex)) return;
-            renderingPages.add(pageIndex);
-            
+            if (!window._markupPdfDoc || window.renderedPages.has(pageIndex) || window.renderingPages.has(pageIndex)) return;
+            window.renderingPages.add(pageIndex);
             try {
-                const page = await pdfDoc.getPage(pageIndex + 1);
+                const page = await window._markupPdfDoc.getPage(pageIndex + 1);
                 const viewport = page.getViewport({ scale: this.scale });
-                
                 const canvas = containerEl.querySelector('canvas');
                 if (!canvas) return;
-                
                 const ctx = canvas.getContext('2d');
-                canvas.width = viewport.width;
-                canvas.height = viewport.height;
-                
-                const renderContext = {
-                    canvasContext: ctx,
-                    viewport: viewport
-                };
-                
-                await page.render(renderContext).promise;
-                renderedPages.add(pageIndex);
+                canvas.width = viewport.width; canvas.height = viewport.height;
+                await page.render({canvasContext: ctx, viewport: viewport}).promise;
+                window.renderedPages.add(pageIndex);
             } catch (err) {
-                if (err.name !== 'RenderingCancelledException') {
-                    console.error('Error rendering page:', err);
-                }
-            } finally {
-                renderingPages.delete(pageIndex);
-            }
+                console.error("[renderPageIfVisible] page " + pageIndex + " failed:", err);
+                // Don't alert on every page — log and keep going
+            } finally { window.renderingPages.delete(pageIndex); }
         },
-
         changeScale(delta) {
             this.scale += delta;
-            
-            // Clear all rendered statuses so they re-render on scroll
-            renderedPages.clear();
-            document.querySelectorAll('.pdf-canvas').forEach(c => {
-                const ctx = c.getContext('2d');
-                ctx.clearRect(0, 0, c.width, c.height);
-            });
-
-            // Force re-render of currently visible ones
-            this.$nextTick(() => {
-                const containers = this.$refs.container.querySelectorAll('[data-page]');
-                containers.forEach(el => {
-                    const rect = el.getBoundingClientRect();
-                    const containerRect = this.$refs.container.getBoundingClientRect();
-                    // If vertically in viewport roughly
-                    if (rect.top < containerRect.bottom + 800 && rect.bottom > containerRect.top - 800) {
-                        const pageIndex = parseInt(el.dataset.page);
-                        this.renderPageIfVisible(pageIndex, el);
-                    }
-                });
-            });
+            window.renderedPages.clear();
+            document.querySelectorAll('.pdf-canvas').forEach(c => c.getContext('2d').clearRect(0, 0, c.width, c.height));
+            this.$nextTick(() => this.renderCurrentPage());
         },
-
-        async zoomIn() {
-            if(this.scale < 3.0) {
-                this.changeScale(0.25);
-            }
-        },
-        
-        async zoomOut() {
-            if(this.scale > 0.5) {
-                this.changeScale(-0.25);
-            }
-        },
-
+        zoomIn() { if(this.scale < 3.0) this.changeScale(0.25); },
+        zoomOut() { if(this.scale > 0.5) this.changeScale(-0.25); },
         startDraw(e, pageIndex) {
-            if (e.button !== 0) return; // only left click
-            this.isDrawing = true;
-            this.drawingPage = pageIndex;
+            if (e.button !== 0) return;
+            this.isDrawing = true; this.drawingPage = pageIndex;
             const rect = e.currentTarget.getBoundingClientRect();
-            this.startX = e.clientX - rect.left;
-            this.startY = e.clientY - rect.top;
+            this.startX = e.clientX - rect.left; this.startY = e.clientY - rect.top;
             this.drawBox = { x: this.startX, y: this.startY, w: 0, h: 0 };
         },
-
         draw(e, pageIndex) {
+            if (this.isResizing) { this.doResize(e); return; }
             if (!this.isDrawing || this.drawingPage !== pageIndex) return;
             const rect = e.currentTarget.getBoundingClientRect();
             const currentX = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
             const currentY = Math.max(0, Math.min(e.clientY - rect.top, rect.height));
-            
-            this.drawBox.x = Math.min(this.startX, currentX);
-            this.drawBox.y = Math.min(this.startY, currentY);
-            this.drawBox.w = Math.abs(currentX - this.startX);
-            this.drawBox.h = Math.abs(currentY - this.startY);
+            this.drawBox.x = Math.min(this.startX, currentX); this.drawBox.y = Math.min(this.startY, currentY);
+            this.drawBox.w = Math.abs(currentX - this.startX); this.drawBox.h = Math.abs(currentY - this.startY);
         },
-
         endDraw(e, pageIndex) {
+            if (this.isResizing) { this.endResize(); return; }
             if (!this.isDrawing || this.drawingPage !== pageIndex) return;
-            this.isDrawing = false;
-            this.drawingPage = null;
-            
+            this.isDrawing = false; this.drawingPage = null;
             if (this.drawBox.w > 10 && this.drawBox.h > 10) {
                 const rect = e.currentTarget.getBoundingClientRect();
                 this.regionCounter++;
                 const newRegion = {
-                    id: this.regionCounter,
-                    page: pageIndex,
-                    x0_pct: this.drawBox.x / rect.width,
-                    y0_pct: this.drawBox.y / rect.height,
-                    x1_pct: (this.drawBox.x + this.drawBox.w) / rect.width,
-                    y1_pct: (this.drawBox.y + this.drawBox.h) / rect.height,
-                    label: 'User Drawn Region',
-                    short_alt: '',
-                    long_alt: '',
-                    crop_png_b64: null,
-                    isLoading: true,
-                    isRefining: false,
-                    refinePrompt: '',
-                    isUserDrawn: true
+                    id: this.regionCounter, page: pageIndex,
+                    x0_pct: this.drawBox.x / rect.width, y0_pct: this.drawBox.y / rect.height,
+                    x1_pct: (this.drawBox.x + this.drawBox.w) / rect.width, y1_pct: (this.drawBox.y + this.drawBox.h) / rect.height,
+                    label: 'User Drawn Region', short_alt: '', long_alt: '', crop_png_b64: null,
+                    isLoading: true, isRefining: false, refinePrompt: '', isUserDrawn: true, color: '#f59e0b'
                 };
-                this.regions.push(newRegion);
-                this.selectedRegion = newRegion;
-                this.refreshLucide();
-                
-                // Call API
+                this.regions.push(newRegion); this.selectedRegion = newRegion; this.refreshLucide();
                 this.generateRegionAltText(newRegion);
             }
             this.drawBox = {x: 0, y: 0, w: 0, h: 0};
         },
+
+        
+
+        
 
         deleteRegion(id) {
             this.regions = this.regions.filter(r => r.id !== id);
@@ -503,17 +517,6 @@ function markupApp() {
 
         selectRegion(region) {
             this.selectedRegion = region;
-            
-            const container = this.$refs.container.querySelector(`[data-page="${region.page}"]`);
-            if (container) {
-                const rect = container.getBoundingClientRect();
-                const viewRect = this.$refs.container.getBoundingClientRect();
-                
-                // Scroll if fully or partially out of view
-                if (rect.top < viewRect.top || rect.bottom > viewRect.bottom) {
-                    container.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }
-            }
         },
 
         async generateRegionAltText(region) {
@@ -602,8 +605,7 @@ function markupApp() {
             this.isExporting = true;
             
             try {
-                // Use sortedRegions so Excel output is also correctly ordered
-                const resultsPayload = this.sortedRegions.map(r => ({
+                const resultsPayload = this.regions.map(r => ({
                     id: r.id,
                     page: r.page,
                     x0_pct: r.x0_pct,
@@ -623,7 +625,7 @@ function markupApp() {
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         session_id: this.sessionId,
-                        pdf_filename: this.pdfFilename,
+                        pdf_filename: this.filename,
                         results: resultsPayload
                     })
                 });

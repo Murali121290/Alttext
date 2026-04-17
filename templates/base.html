@@ -11,6 +11,7 @@
     <!-- Scripts (Defer) -->
     <script defer src="/static/js/alpine.min.js"></script>
     <script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script src="https://unpkg.com/split.js/dist/split.min.js"></script>
 
     <style>
         :root {
@@ -37,10 +38,6 @@
             height: 6px;
         }
 
-        ::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
         ::-webkit-scrollbar-thumb {
             background: #cbd5e1;
             border-radius: 3px;
@@ -48,6 +45,23 @@
 
         ::-webkit-scrollbar-thumb:hover {
             background: #94a3b8;
+        }
+
+        .gutter {
+            background-color: #e2e8f0;
+            background-repeat: no-repeat;
+            background-position: 50%;
+            cursor: col-resize;
+            transition: background-color 0.2s;
+            z-index: 40;
+        }
+
+        .gutter:hover {
+            background-color: #cbd5e1;
+        }
+
+        .gutter.gutter-horizontal {
+            background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAeCAYAAADkftS9AAAAIklEQVQoU2M4c+bMfxAGAgYYQxcAD8ZhQFE0igZQwI0hAADM6Q/z55b+yQAAAABJRU5ErkJggg==');
         }
 
         [x-cloak] { display: none !important; }
@@ -222,7 +236,7 @@
                 <!-- End User Profile -->
             </header>
 
-            <main class="p-6 lg:p-8">
+            <main class="{% block main_class %}p-6 lg:p-8{% endblock %}">
                 <!-- Flash Messages -->
                 {% with messages = get_flashed_messages(with_categories=true) %}
                 {% if messages %}
