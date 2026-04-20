@@ -39,6 +39,8 @@ services:
       timeout: 5s
       retries: 5
     restart: always
+    networks:
+      - default
 
 networks:
   default: {}
