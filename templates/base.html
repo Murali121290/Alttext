@@ -6,10 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Alt Text Generator - Document Intelligence</title>
     <!-- Local CSS (Tailwind Compiled) -->
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 
     <!-- Scripts (Defer) -->
-    <script defer src="/static/js/alpine.min.js"></script>
+    <script defer src="{{ url_for('static', filename='js/alpine.min.js') }}"></script>
     <script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
     <script src="https://unpkg.com/split.js/dist/split.min.js"></script>
 
@@ -86,7 +86,7 @@
             <!-- Logo -->
             <div class="h-20 flex items-center justify-between px-6 border-b border-slate-100">
                 <div class="flex items-center gap-3">
-                    <img src="/static/images/S4c.png" alt="Logo" class="h-10">
+                    <img src="{{ url_for('static', filename='images/S4c.png') }}" alt="Logo" class="h-10">
                     <div>
                         <h1 class="text-lg font-bold text-slate-800 tracking-tight">Alt Text Gen</h1>
                         <p class="text-[11px] text-slate-400 font-medium tracking-wide uppercase">AI Accessibility</p>

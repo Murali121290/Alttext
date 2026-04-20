@@ -3,12 +3,12 @@
 {% block main_class %}p-0{% endblock %}
 
 {% block content %}
-<script src="/static/js/pdf.min.js?v=3.11.174"></script>
+<script src="{{ url_for('static', filename='js/pdf.min.js') }}?v=3.11.174"></script>
 <script>
     if (typeof pdfjsLib === 'undefined') {
-        console.error('[PDF.js] pdf.min.js failed to load from /static/js/pdf.min.js');
+        console.error('[PDF.js] pdf.min.js failed to load');
     } else {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/js/pdf.worker.min.js?v=3.11.174';
+        pdfjsLib.GlobalWorkerOptions.workerSrc = '{{ url_for("static", filename="js/pdf.worker.min.js") }}?v=3.11.174';
         console.log('[PDF.js] version loaded:', pdfjsLib.version);
     }
 </script>
@@ -406,9 +406,9 @@ function markupApp() {
             try {
                 window._markupPdfDoc = await pdfjsLib.getDocument({
                     url: `/api/markup/doc/${this.sessionId}`,
-                    cMapUrl: '/static/cmaps/',
+                    cMapUrl: '{{ url_for("static", filename="cmaps/") }}',
                     cMapPacked: true,
-                    standardFontDataUrl: '/static/standard_fonts/'
+                    standardFontDataUrl: '{{ url_for("static", filename="standard_fonts/") }}'
                 }).promise;
             } catch(e) {
                 console.error('[loadPDF] failed:', e);

@@ -3,12 +3,12 @@
 {% block main_class %}p-0{% endblock %}
 
 {% block content %}
-<script src="/static/js/pdf.min.js"></script>
+<script src="{{ url_for('static', filename='js/pdf.min.js') }}"></script>
 <script>
     if (typeof pdfjsLib === 'undefined') {
-        console.error('[PDF.js] pdf.min.js failed to load from /static/js/pdf.min.js');
+        console.error('[PDF.js] pdf.min.js failed to load');
     } else {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/js/pdf.worker.min.js';
+        pdfjsLib.GlobalWorkerOptions.workerSrc = '{{ url_for("static", filename="js/pdf.worker.min.js") }}';
         console.log('[PDF.js] version loaded:', pdfjsLib.version);
     }
 </script>
@@ -318,9 +318,9 @@ function reviewApp(jobId, pdfFilename) {
 
                 window._reviewPdfDoc = await pdfjsLib.getDocument({
                     data: buffer,
-                    cMapUrl: '/static/cmaps/',
+                    cMapUrl: '{{ url_for("static", filename="cmaps/") }}',
                     cMapPacked: true,
-                    standardFontDataUrl: '/static/standard_fonts/'
+                    standardFontDataUrl: '{{ url_for("static", filename="standard_fonts/") }}'
                 }).promise;
             } catch(e) {
                 console.error("[loadPDF] failed:", e);

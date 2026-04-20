@@ -5,9 +5,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Register - Alt Text Generator</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="https://cdn.tailwindcss.com"></script>
-    <script defer src="/static/js/lucide.min.js"></script>
+    <script defer src="{{ url_for('static', filename='js/lucide.min.js') }}"></script>
     <style>
         .glass {
             background: rgba(255, 255, 255, 0.9);
@@ -21,7 +21,7 @@
 
     <div class="glass w-full max-w-md p-8 rounded-2xl shadow-xl border border-white/50">
         <div class="flex flex-col items-center mb-8">
-            <img src="/static/images/S4c.png" alt="Logo" class="h-20 mb-4">
+            <img src="{{ url_for('static', filename='images/S4c.png') }}" alt="Logo" class="h-20 mb-4">
             <h1 class="text-2xl font-bold text-slate-800">Create Account</h1>
             <p class="text-slate-500 text-sm mt-1">Join the platform</p>
         </div>

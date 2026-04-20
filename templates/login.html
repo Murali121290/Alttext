@@ -5,9 +5,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - Alt Text Generator</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="https://cdn.tailwindcss.com"></script>
-    <script defer src="/static/js/lucide.min.js"></script>
+    <script defer src="{{ url_for('static', filename='js/lucide.min.js') }}"></script>
     <style>
         :root {
             --rainbow-1: #FF3CAC;
@@ -287,7 +287,7 @@
 
         <div class="auth-form">
             <a href="{{ url_for('index') }}">
-                <img src="/static/images/S4c.png" alt="Logo" class="logo-image">
+                <img src="{{ url_for('static', filename='images/S4c.png') }}" alt="Logo" class="logo-image">
             </a>
             <h2>Alt Text Generator</h2>
             <p class="subtitle">Sign in to your account</p>
