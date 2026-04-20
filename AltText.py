@@ -337,7 +337,7 @@ def set_security_headers(response):
 # 'session' cookie when both are served under the same domain via nginx proxy.
 # Set the path to /alttext/ directly so nginx proxy_cookie_path isn't needed.
 app.config['SESSION_COOKIE_NAME'] = 'alttext_session'
-app.config['SESSION_COOKIE_PATH'] = '/alttext/'
+app.config['SESSION_COOKIE_PATH'] = os.getenv('SESSION_COOKIE_PATH', '/')
 
 if not app.debug:
     app.config['SESSION_COOKIE_SECURE'] = True
