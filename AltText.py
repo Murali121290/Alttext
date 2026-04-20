@@ -304,7 +304,9 @@ def init_db():
 init_db()
 
 # ---------------- APP ----------------
+from werkzeug.middleware.proxy_fix import ProxyFix
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 app.secret_key = os.getenv("SECRET_KEY", "dev_secret_key_change_in_prod") # vital for session
 # Set debug flag early so conditional config blocks below evaluate correctly.
 # app.run(debug=True) sets this too late — the blocks run at import time.
