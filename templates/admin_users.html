@@ -95,7 +95,7 @@
                     <i data-lucide="x" class="h-5 w-5"></i>
                 </button>
             </div>
-            <form action="/admin/users/create" method="POST" class="space-y-4">
+            <form action="{{ url_for('admin_create_user') }}" method="POST" class="space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-slate-700 mb-1">Username</label>
                     <input type="text" name="username" required
@@ -149,7 +149,7 @@
                     <i data-lucide="x" class="h-5 w-5"></i>
                 </button>
             </div>
-            <form action="/admin/users/password" method="POST" class="space-y-4">
+            <form action="{{ url_for('admin_change_password') }}" method="POST" class="space-y-4">
                 <input type="hidden" name="user_id" :value="selectedUser && selectedUser.id">
                 <div>
                     <label class="block text-sm font-medium text-slate-700 mb-1">New Password</label>
@@ -183,7 +183,7 @@
                     <i data-lucide="x" class="h-5 w-5"></i>
                 </button>
             </div>
-            <form action="/admin/users/role" method="POST" class="space-y-4">
+            <form action="{{ url_for('admin_change_role') }}" method="POST" class="space-y-4">
                 <input type="hidden" name="user_id" :value="selectedUser && selectedUser.id">
                 <div>
                     <label class="block text-sm font-medium text-slate-700 mb-1">Select Role</label>

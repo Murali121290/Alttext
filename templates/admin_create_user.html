@@ -12,7 +12,7 @@
 
     <!-- Create User Form -->
     <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 max-w-2xl">
-        <form action="/admin/users/create" method="POST" class="space-y-6">
+        <form action="{{ url_for('admin_create_user') }}" method="POST" class="space-y-6">
             <div>
                 <label class="block text-sm font-medium text-slate-700 mb-2">Username</label>
                 <div class="relative">

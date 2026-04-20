@@ -22,7 +22,7 @@
                 Ensures accessibility compliance automatically.
             </p>
             <div class="flex flex-wrap gap-3">
-                <a href="/upload"
+                <a href="{{ url_for('upload_page') }}"
                     class="inline-flex items-center gap-2 px-6 py-3 rounded-xl font-semibold text-emerald-800 transition-all bg-white hover:bg-emerald-50 shadow-lg shadow-emerald-900/10 hover:shadow-emerald-900/20">
                     <i data-lucide="upload" class="h-5 w-5"></i>
                     Upload PDFs/ Excels
@@ -290,7 +290,7 @@
                 <p class="text-sm text-slate-500">Latest processing jobs</p>
             </div>
         </div>
-        <a href="/batches"
+        <a href="{{ url_for('batches_page') }}"
             class="flex items-center gap-1.5 text-sm font-medium text-emerald-600 hover:text-emerald-700 transition-colors">
             View All <i data-lucide="arrow-up-right" class="h-4 w-4"></i>
         </a>

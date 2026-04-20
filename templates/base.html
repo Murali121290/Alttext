@@ -103,21 +103,21 @@
             <nav class="p-4 space-y-1.5">
                 <p class="px-4 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Menu</p>
 
-                <a href="/"
+                <a href="{{ url_for('index') }}"
                     class="flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 {{ 'bg-gradient-to-r from-amber-500/20 to-orange-500/10 text-amber-400 shadow-lg shadow-amber-500/5' if active_page == 'dashboard' else 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200' }}">
                     <i data-lucide="layout-dashboard"
                         class="h-5 w-5 {{ 'text-amber-400' if active_page == 'dashboard' else '' }}"></i>
                     <span>Dashboard</span>
                 </a>
 
-                <a href="/upload"
+                <a href="{{ url_for('upload_page') }}"
                     class="flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 {{ 'bg-gradient-to-r from-amber-500/20 to-orange-500/10 text-amber-600 shadow-lg shadow-amber-500/5' if active_page == 'upload' else 'text-slate-700 hover:bg-slate-100 hover:text-slate-900' }}">
                     <i data-lucide="upload"
                         class="h-5 w-5 {{ 'text-amber-600' if active_page == 'upload' else 'text-slate-600' }}"></i>
                     <span>Process Figures</span>
                 </a>
 
-                <a href="/files"
+                <a href="{{ url_for('files_page') }}"
                     class="flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 {{ 'bg-gradient-to-r from-amber-500/20 to-orange-500/10 text-amber-600 shadow-lg shadow-amber-500/5' if active_page == 'files' else 'text-slate-700 hover:bg-slate-100 hover:text-slate-900' }}">
                     <i data-lucide="folder"
                         class="h-5 w-5 {{ 'text-amber-600' if active_page == 'files' else 'text-slate-600' }}"></i>
@@ -125,14 +125,14 @@
                 </a>
 
                 <!-- Placeholder links -->
-                <a href="/batches"
+                <a href="{{ url_for('batches_page') }}"
                     class="flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 {{ 'bg-gradient-to-r from-amber-500/20 to-orange-500/10 text-amber-600 shadow-lg shadow-amber-500/5' if active_page == 'batches' else 'text-slate-700 hover:bg-slate-100 hover:text-slate-900' }}">
                     <i data-lucide="folder-open"
                         class="h-5 w-5 {{ 'text-amber-600' if active_page == 'batches' else 'text-slate-600' }}"></i>
                     <span>Batches</span>
                 </a>
 
-                <a href="/markup"
+                <a href="{{ url_for('markup_page') }}"
                     class="flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 {{ 'bg-gradient-to-r from-amber-500/20 to-orange-500/10 text-amber-600 shadow-lg shadow-amber-500/5' if active_page == 'markup' else 'text-slate-700 hover:bg-slate-100 hover:text-slate-900' }}">
                     <i data-lucide="crop"
                         class="h-5 w-5 {{ 'text-amber-600' if active_page == 'markup' else 'text-slate-600' }}"></i>
@@ -149,13 +149,13 @@
                 {% if current_user.is_authenticated and current_user.role == 'admin' %}
                 <p class="px-4 py-2 mt-4 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
                     Administration</p>
-                <a href="/admin"
+                <a href="{{ url_for('admin_dashboard') }}"
                     class="flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 {{ 'bg-gradient-to-r from-amber-500/20 to-orange-500/10 text-amber-400 shadow-lg shadow-amber-500/5' if active_page == 'admin' else 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200' }}">
                     <i data-lucide="shield"
                         class="h-5 w-5 {{ 'text-amber-400' if active_page == 'admin' else '' }}"></i>
                     <span>Admin Panel</span>
                 </a>
-                <a href="/admin/users"
+                <a href="{{ url_for('admin_users') }}"
                     class="flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 {{ 'bg-gradient-to-r from-amber-500/20 to-orange-500/10 text-amber-400 shadow-lg shadow-amber-500/5' if active_page == 'admin_users' else 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200' }}">
                     <i data-lucide="users"
                         class="h-5 w-5 {{ 'text-amber-400' if active_page == 'admin_users' else '' }}"></i>
@@ -164,7 +164,7 @@
                 {% endif %}
 
                 <div class="mt-4 pt-4 border-t border-slate-700/50">
-                    <a href="/logout"
+                    <a href="{{ url_for('logout') }}"
                         class="flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 text-slate-400 hover:bg-red-900/20 hover:text-red-400">
                         <i data-lucide="log-out" class="h-5 w-5"></i>
                         <span>Logout</span>
@@ -213,7 +213,7 @@
                     </button>
                     <!-- Breadcrumbs -->
                     <div class="flex items-center text-sm">
-                        <a href="/" class="text-slate-400 hover:text-slate-600 transition-colors">Home</a>
+                        <a href="{{ url_for('index') }}" class="text-slate-400 hover:text-slate-600 transition-colors">Home</a>
                         {% if title %}
                         <i data-lucide="chevron-right" class="h-4 w-4 mx-2 text-slate-300"></i>
                         <span class="font-semibold text-slate-700">{{ title }}</span>

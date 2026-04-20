@@ -286,7 +286,7 @@
         </div>
 
         <div class="auth-form">
-            <a href="/">
+            <a href="{{ url_for('index') }}">
                 <img src="/static/images/S4c.png" alt="Logo" class="logo-image">
             </a>
             <h2>Alt Text Generator</h2>
@@ -299,7 +299,7 @@
             </div>
             {% endif %}
 
-            <form method="POST" action="/login" class="mt-8">
+            <form method="POST" action="{{ url_for('login_page', next=request.args.get('next', '')) }}" class="mt-8">
                 <div class="form-group">
                     <label for="username">Username</label>
                     <input type="text" id="username" name="username" required>
@@ -313,7 +313,7 @@
                 <button type="submit" class="btn-rainbow">Sign In →</button>
             </form>
 
-            <p class="auth-link">Don't have an account? <a href="/register">Create one</a></p>
+            <p class="auth-link">Don't have an account? <a href="{{ url_for('register_page') }}">Create one</a></p>
         </div>
 
         <div class="copyright-text"
