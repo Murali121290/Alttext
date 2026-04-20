@@ -395,8 +395,8 @@ def login_page():
     if current_user.is_authenticated:
         # Check if user must change password
         if current_user.must_change_password:
-            return flask_redirect("/change-password")
-        return flask_redirect("/")
+            return flask_redirect(url_for("change_password"))
+        return flask_redirect(url_for("index"))
 
     if request.method == "POST":
         username = request.form.get("username")
@@ -422,9 +422,9 @@ def login_page():
             # Redirect to password change if required
             if must_change:
                 flash("You must change your password before continuing.", "warning")
-                return flask_redirect("/change-password")
+                return flask_redirect(url_for("change_password"))
 
-            return flask_redirect(request.args.get("next") or "/")
+            return flask_redirect(request.args.get("next") or url_for("index"))
         else:
             logger.warning(f"Failed login attempt for user: {username}")
             return render_template("login.html", error="Invalid credentials")
@@ -435,7 +435,7 @@ def login_page():
 @login_required
 def logout():
     logout_user()
-    return flask_redirect("/login")
+    return flask_redirect(url_for("login_page"))
 
 @app.route("/change-password", methods=["GET", "POST"])
 @login_required
@@ -476,7 +476,7 @@ def change_password():
 
         flash("Password changed successfully.", "success")
         logger.info(f"User {current_user.username} changed their password")
-        return flask_redirect("/")
+        return flask_redirect(url_for("index"))
 
     return render_template("change_password.html", must_change=current_user.must_change_password)
 
@@ -485,7 +485,7 @@ def change_password():
 def register_page():
     # Public registration
     if current_user.is_authenticated:
-        return flask_redirect("/")
+        return flask_redirect(url_for("index"))
         
     if request.method == "POST":
         username = request.form.get("username")
@@ -519,7 +519,7 @@ def register_page():
             login_user(user_obj)
 
             logger.info(f"New user registered: {username}")
-            return flask_redirect("/")
+            return flask_redirect(url_for("index"))
         except Exception as e:
             return render_template("register.html", error=f"Registration failed: {e}")
             
