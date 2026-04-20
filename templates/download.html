@@ -56,7 +56,7 @@
                         <td class="px-6 py-4 text-right">
                             
                             {% if file.job_id and not file.name.endswith('_validated.xlsx') %}
-                            <a href="{{ url_for('review_job', job_id=file.job_id) }}"
+                            <a href="{{ url_for('review_page', job_id=file.job_id) }}"
                                 class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 transition-colors mr-2">
                                 <i data-lucide="eye" class="h-4 w-4"></i>
                                 Review
