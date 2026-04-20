@@ -333,6 +333,12 @@ def set_security_headers(response):
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
     return response
 
+# Use a distinct cookie name so it doesn't collide with the hub-server's own
+# 'session' cookie when both are served under the same domain via nginx proxy.
+# Set the path to /alttext/ directly so nginx proxy_cookie_path isn't needed.
+app.config['SESSION_COOKIE_NAME'] = 'alttext_session'
+app.config['SESSION_COOKIE_PATH'] = '/alttext/'
+
 if not app.debug:
     app.config['SESSION_COOKIE_SECURE'] = True
     app.config['SESSION_COOKIE_HTTPONLY'] = True
