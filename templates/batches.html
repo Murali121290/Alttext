@@ -140,7 +140,7 @@
             async refresh() {
                 this.loading = true;
                 try {
-                    const res = await fetch('/api/batches?limit=100', { credentials: 'same-origin' });
+                    const res = await fetch(window._BASE + '/api/batches?limit=100', { credentials: 'same-origin' });
                     if (res.ok) {
                         const data = await res.json();
                         this.batches = data.batches;

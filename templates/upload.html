@@ -256,7 +256,7 @@
                 formData.append('run_gpt', this.runGpt ? 'true' : 'false');
 
                 try {
-                    const res = await fetch('/api/queue/batch', {
+                    const res = await fetch(window._BASE + '/api/queue/batch', {
                         method: 'POST',
                         body: formData,
                         credentials: 'same-origin'
@@ -296,7 +296,7 @@
                 formData.append('files', file);
 
                 try {
-                    const res = await fetch('/api/extract_images', {
+                    const res = await fetch(window._BASE + '/api/extract_images', {
                         method: 'POST',
                         body: formData,
                         credentials: 'same-origin'

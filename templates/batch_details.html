@@ -150,7 +150,7 @@
             async refresh(silent = false) {
                 if (!silent) this.loading = true;
                 try {
-                    const res = await fetch(`/api/queue/batch/${batchId}`, { credentials: 'same-origin' });
+                    const res = await fetch(window._BASE + `/api/queue/batch/${batchId}`, { credentials: 'same-origin' });
                     if (res.ok) {
                         const data = await res.json();
 

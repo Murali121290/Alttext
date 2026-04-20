@@ -352,7 +352,7 @@ function markupApp() {
             fd.append('file', file);
 
             try {
-                const res = await fetch('/api/markup/upload', {
+                const res = await fetch(window._BASE + '/api/markup/upload', {
                     method: 'POST',
                     credentials: 'same-origin',
                     body: fd
@@ -405,7 +405,7 @@ function markupApp() {
             window.renderingPages = new Set();
             try {
                 window._markupPdfDoc = await pdfjsLib.getDocument({
-                    url: `/api/markup/doc/${this.sessionId}`,
+                    url: window._BASE + `/api/markup/doc/${this.sessionId}`,
                     cMapUrl: '{{ url_for("static", filename="cmaps/") }}',
                     cMapPacked: true,
                     standardFontDataUrl: '{{ url_for("static", filename="standard_fonts/") }}'
@@ -525,7 +525,7 @@ function markupApp() {
             
             target.isLoading = true;
             try {
-                const res = await fetch('/api/markup/generate_region', {
+                const res = await fetch(window._BASE + '/api/markup/generate_region', {
                     method: 'POST',
                     credentials: 'same-origin',
                     headers: {'Content-Type': 'application/json'},
@@ -567,7 +567,7 @@ function markupApp() {
             
             target.isRefining = true;
             try {
-                const res = await fetch('/api/markup/refine_region', {
+                const res = await fetch(window._BASE + '/api/markup/refine_region', {
                     method: 'POST',
                     credentials: 'same-origin',
                     headers: {'Content-Type': 'application/json'},
@@ -619,7 +619,7 @@ function markupApp() {
                     crop_png_b64: r.crop_png_b64
                 }));
                 
-                const res = await fetch('/api/markup/export', {
+                const res = await fetch(window._BASE + '/api/markup/export', {
                     method: 'POST',
                     credentials: 'same-origin',
                     headers: {'Content-Type': 'application/json'},

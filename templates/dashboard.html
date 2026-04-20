@@ -375,9 +375,9 @@
             async refresh() {
                 try {
                     const [qRes, tRes, bRes] = await Promise.all([
-                        fetch('/api/queue/status', { credentials: 'same-origin' }),
-                        fetch('/api/tokens/stats', { credentials: 'same-origin' }),
-                        fetch('/api/batches?limit=5', { credentials: 'same-origin' })
+                        fetch(window._BASE + '/api/queue/status', { credentials: 'same-origin' }),
+                        fetch(window._BASE + '/api/tokens/stats', { credentials: 'same-origin' }),
+                        fetch(window._BASE + '/api/batches?limit=5', { credentials: 'same-origin' })
                     ]);
                     this.stats = await qRes.json();
                     this.tokens = await tRes.json();

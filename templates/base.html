@@ -8,6 +8,7 @@
     <!-- Local CSS (Tailwind Compiled) -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 
+    <script>window._BASE = '{{ request.script_name }}';</script>
     <!-- Scripts (Defer) -->
     <script defer src="{{ url_for('static', filename='js/alpine.min.js') }}"></script>
     <script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
@@ -292,7 +293,7 @@
                 },
                 async fetchStats() {
                     try {
-                        const response = await fetch('/api/queue/status', { credentials: 'same-origin' });
+                        const response = await fetch(window._BASE + '/api/queue/status', { credentials: 'same-origin' });
                         if (response.ok) {
                             this.stats = await response.json();
                             // Resume polling if work started

@@ -280,7 +280,7 @@ function reviewApp(jobId, pdfFilename) {
         
         async loadData() {
             try {
-                const res = await fetch(`/api/job/${this.jobId}/data`, { credentials: 'same-origin' });
+                const res = await fetch(window._BASE + `/api/job/${this.jobId}/data`, { credentials: 'same-origin' });
                 const data = await res.json();
                 if(data.error) throw new Error(data.error);
 
@@ -312,7 +312,7 @@ function reviewApp(jobId, pdfFilename) {
             window.renderedPages = window.renderedPages || new Set();
             window.renderingPages = window.renderingPages || new Set();
             try {
-                const res = await fetch(`/api/job/${this.jobId}/doc`, { credentials: 'same-origin' });
+                const res = await fetch(window._BASE + `/api/job/${this.jobId}/doc`, { credentials: 'same-origin' });
                 if (!res.ok) throw new Error('PDF not found (HTTP ' + res.status + ')');
                 const buffer = await res.arrayBuffer();
 
@@ -510,7 +510,7 @@ function reviewApp(jobId, pdfFilename) {
             
             target.isLoading = true;
             try {
-                const res = await fetch(`/api/job/${this.jobId}/generate_region`, {
+                const res = await fetch(window._BASE + `/api/job/${this.jobId}/generate_region`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     credentials: 'same-origin',
@@ -552,7 +552,7 @@ function reviewApp(jobId, pdfFilename) {
             
             target.isRefining = true;
             try {
-                const res = await fetch(`/api/job/${this.jobId}/refine_region`, {
+                const res = await fetch(window._BASE + `/api/job/${this.jobId}/refine_region`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     credentials: 'same-origin',
@@ -604,7 +604,7 @@ function reviewApp(jobId, pdfFilename) {
                     crop_png_b64: r.crop_png_b64
                 }));
 
-                const res = await fetch(`/api/job/${this.jobId}/update`, {
+                const res = await fetch(window._BASE + `/api/job/${this.jobId}/update`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     credentials: 'same-origin',
