@@ -17,6 +17,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - SECRET_KEY=${SECRET_KEY}
       - FLASK_DEBUG=false
+      - ALTTEXT_SERVICE_TOKEN=${ALTTEXT_SERVICE_TOKEN}
     depends_on:
       db:
         condition: service_healthy

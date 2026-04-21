@@ -358,6 +358,15 @@ login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login_page'
 
+SERVICE_TOKEN = os.getenv("ALTTEXT_SERVICE_TOKEN")
+
+@login_manager.request_loader
+def load_user_from_request(req):
+    incoming = req.headers.get("X-Service-Token")
+    if SERVICE_TOKEN and incoming and incoming == SERVICE_TOKEN:
+        return User(id=0, username='__service__', role='admin', must_change_password=False)
+    return None
+
 class User(UserMixin):
     def __init__(self, id, username, role, must_change_password=False):
         self.id = id
@@ -767,6 +776,30 @@ def files_page():
         print(f"Error listing output files: {e}")
         
     return render_template('download.html', active_page='files', files=files_data)
+
+@app.route("/api/output-files", methods=["GET"])
+@login_required
+def output_files_api():
+    files_data = []
+    try:
+        completed_jobs = query_db("SELECT id, output_file FROM jobs WHERE status = 'completed' AND output_file IS NOT NULL")
+        file_to_job = {j['output_file']: j['id'] for j in completed_jobs}
+        if os.path.exists(OUTPUT_FOLDER):
+            for f in os.listdir(OUTPUT_FOLDER):
+                if not f.startswith('.'):
+                    path = os.path.join(OUTPUT_FOLDER, f)
+                    stats = os.stat(path)
+                    files_data.append({
+                        'name': f,
+                        'size': stats.st_size,
+                        'mtime': datetime.datetime.fromtimestamp(stats.st_mtime).isoformat(),
+                        'is_xlsx': f.endswith('.xlsx'),
+                        'job_id': file_to_job.get(f)
+                    })
+        files_data.sort(key=lambda x: x['mtime'], reverse=True)
+    except Exception as e:
+        logger.error(f"Error listing output files: {e}")
+    return jsonify({"files": files_data})
 
 @app.route("/api/queue/batch", methods=["POST"])
 @limiter.limit("20 per hour")
