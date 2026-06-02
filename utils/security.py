@@ -50,8 +50,8 @@ class PasswordValidator:
 class FileValidator:
     """Validates uploaded files for security."""
 
-    MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
-    MAX_BATCH_SIZE = 500 * 1024 * 1024  # 500 MB total per batch
+    MAX_FILE_SIZE = 200 * 1024 * 1024  # 200 MB
+    MAX_BATCH_SIZE = 1000 * 1024 * 1024  # 1000 MB total per batch
 
     ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.xlsx', '.xls'}
     ALLOWED_MIME_TYPES = {
