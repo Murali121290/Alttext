@@ -834,11 +834,13 @@ def run_excel_validation(job_id, filepath, conn):
                 logger.error(f"Job {job_id}: Row {orig_idx+1} failed: {e}")
 
     results = [ordered_results[idx] for idx in sorted(ordered_results)]
+    gpt_image_count = total_rows
+    gpt_alttext_count = len(results)
     out_name = f"{os.path.splitext(filename)[0]}_validated.xlsx"
     out_path = os.path.join(OUTPUT_FOLDER, out_name)
     _gpt_build_excel(filepath, results, out_path)
     logger.info(f"Job {job_id}: Excel validation complete. Output → {out_path} (GPT In: {total_gpt_in}, GPT Out: {total_gpt_out})")
-    return out_name, total_gpt_in, total_gpt_out
+    return out_name, total_gpt_in, total_gpt_out, gpt_image_count, gpt_alttext_count
 
 
 MAX_WORKERS = int(os.getenv("PDF_MAX_WORKERS", "5"))
@@ -1321,15 +1323,16 @@ def run_batch_processing(batch_id, files_info, run_gemini=True, run_gpt=False):
                 try:
                     if not os.path.exists(filepath):
                         raise FileNotFoundError(f"File not found: {filepath}")
-                    out_name, gpt_in, gpt_out = run_excel_validation(job_id, filepath, conn)
+                    out_name, gpt_in, gpt_out, gpt_img_cnt, gpt_alt_cnt = run_excel_validation(job_id, filepath, conn)
                     # FIX 12 — Use named constants instead of inline magic numbers.
                     gpt_cost = (gpt_in / 1_000_000 * _GPT_INPUT_COST_PER_M) + (gpt_out / 1_000_000 * _GPT_OUTPUT_COST_PER_M)
                     query_db("""
                         UPDATE jobs
                         SET status = 'completed', output_file = %s,
-                            gpt_input_tokens = %s, gpt_output_tokens = %s, gpt_cost = %s
+                            gpt_input_tokens = %s, gpt_output_tokens = %s, gpt_cost = %s,
+                            gpt_image_count = %s, gpt_alttext_count = %s
                         WHERE id = %s
-                    """, (out_name, gpt_in, gpt_out, gpt_cost, job_id), commit=True, conn=conn)
+                    """, (out_name, gpt_in, gpt_out, gpt_cost, gpt_img_cnt, gpt_alt_cnt, job_id), commit=True, conn=conn)
                 except Exception as e:
                     logger.error(f"Job {job_id} (Excel validation) failed: {e}", exc_info=True)
                     query_db("UPDATE jobs SET status = 'failed', error_msg = %s WHERE id = %s",
@@ -1477,29 +1480,35 @@ def run_batch_processing(batch_id, files_info, run_gemini=True, run_gpt=False):
 
                 cost = calculate_cost(total_in, total_out)
 
+                gemini_image_count = len(all_items)
+                gemini_alttext_count = sum(1 for item in all_items if item.get("long_alt", "").strip())
+
                 query_db("""
                     UPDATE jobs
                     SET status = 'completed',
                         output_file = %s,
                         input_tokens = %s,
                         output_tokens = %s,
-                        cost = %s
+                        cost = %s,
+                        alttext_image_count = %s,
+                        alttext_count = %s
                     WHERE id = %s
-                """, (out_name, total_in, total_out, cost, job_id), commit=True, conn=conn)
+                """, (out_name, total_in, total_out, cost, gemini_image_count, gemini_alttext_count, job_id), commit=True, conn=conn)
                 logger.info(f"Job {job_id}: Completed. {len(all_items)} items found across {len(pages_data)} pages.")
 
                 if run_gpt:
                     logger.info(f"Job {job_id}: Chaining into GPT Validation as run_gpt is true...")
                     try:
-                        gpt_out_name, gpt_in, gpt_out = run_excel_validation(job_id, out_path, conn)
+                        gpt_out_name, gpt_in, gpt_out, gpt_img_cnt, gpt_alt_cnt = run_excel_validation(job_id, out_path, conn)
                         # FIX 12 — Use named constants instead of inline magic numbers.
                         gpt_cost = (gpt_in / 1_000_000 * _GPT_INPUT_COST_PER_M) + (gpt_out / 1_000_000 * _GPT_OUTPUT_COST_PER_M)
                         query_db("""
                             UPDATE jobs
                             SET output_file = %s,
-                                gpt_input_tokens = %s, gpt_output_tokens = %s, gpt_cost = %s
+                                gpt_input_tokens = %s, gpt_output_tokens = %s, gpt_cost = %s,
+                                gpt_image_count = %s, gpt_alttext_count = %s
                             WHERE id = %s
-                        """, (gpt_out_name, gpt_in, gpt_out, gpt_cost, job_id), commit=True, conn=conn)
+                        """, (gpt_out_name, gpt_in, gpt_out, gpt_cost, gpt_img_cnt, gpt_alt_cnt, job_id), commit=True, conn=conn)
                     except Exception as gpt_e:
                         logger.error(f"Job {job_id} (Chained GPT Validation) failed: {gpt_e}", exc_info=True)
                         query_db("UPDATE jobs SET error_msg = %s WHERE id = %s",

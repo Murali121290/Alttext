@@ -148,6 +148,20 @@
                             <p class="text-xs text-slate-400 mt-0.5">Processed</p>
                         </div>
                     </div>
+                    <div class="grid grid-cols-2 gap-4 mt-4" x-show="tokens">
+                        <div class="p-4 rounded-xl bg-indigo-50 border border-indigo-100">
+                            <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Images Found</p>
+                            <p class="text-2xl font-bold mt-1 text-indigo-700"
+                                x-text="formatNumber(tokens?.gemini?.all_time?.image_count)">0</p>
+                            <p class="text-xs text-slate-400 mt-0.5">Figures identified</p>
+                        </div>
+                        <div class="p-4 rounded-xl bg-indigo-50 border border-indigo-100">
+                            <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Alt Texts Generated</p>
+                            <p class="text-2xl font-bold mt-1 text-indigo-700"
+                                x-text="formatNumber(tokens?.gemini?.all_time?.alttext_count)">0</p>
+                            <p class="text-xs text-slate-400 mt-0.5">Non-empty descriptions</p>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -236,6 +250,20 @@
                             <p class="text-xs text-slate-400 mt-0.5">Processed</p>
                         </div>
                     </div>
+                    <div class="grid grid-cols-2 gap-4 mt-4" x-show="tokens">
+                        <div class="p-4 rounded-xl bg-emerald-50 border border-emerald-100">
+                            <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Images Validated</p>
+                            <p class="text-2xl font-bold mt-1 text-emerald-700"
+                                x-text="formatNumber(tokens?.gpt?.all_time?.image_count)">0</p>
+                            <p class="text-xs text-slate-400 mt-0.5">Rows processed</p>
+                        </div>
+                        <div class="p-4 rounded-xl bg-emerald-50 border border-emerald-100">
+                            <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Alt Texts Validated</p>
+                            <p class="text-2xl font-bold mt-1 text-emerald-700"
+                                x-text="formatNumber(tokens?.gpt?.all_time?.alttext_count)">0</p>
+                            <p class="text-xs text-slate-400 mt-0.5">Successfully scored</p>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -273,6 +301,43 @@
                         </div>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ================= MARKUP TOOL METRICS ================= -->
+<div class="bg-white rounded-2xl border border-slate-200/60 shadow-sm shadow-slate-200/50 overflow-hidden mt-6">
+    <div class="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+            <div class="p-2.5 rounded-xl bg-gradient-to-br from-amber-100 to-orange-100">
+                <i data-lucide="pen-tool" class="h-5 w-5 text-amber-600"></i>
+            </div>
+            <div>
+                <h3 class="font-semibold text-slate-800">Markup Tool</h3>
+                <p class="text-sm text-slate-500">Manual annotation alt text counts</p>
+            </div>
+        </div>
+    </div>
+    <div class="p-6">
+        <div class="grid grid-cols-3 gap-4" x-show="tokens">
+            <div class="p-4 rounded-xl bg-amber-50 border border-amber-100">
+                <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Images Marked</p>
+                <p class="text-2xl font-bold mt-1 text-amber-700"
+                    x-text="formatNumber(tokens?.markup?.all_time?.image_count)">0</p>
+                <p class="text-xs text-slate-400 mt-0.5">Regions annotated</p>
+            </div>
+            <div class="p-4 rounded-xl bg-amber-50 border border-amber-100">
+                <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Alt Texts Generated</p>
+                <p class="text-2xl font-bold mt-1 text-amber-700"
+                    x-text="formatNumber(tokens?.markup?.all_time?.alttext_count)">0</p>
+                <p class="text-xs text-slate-400 mt-0.5">Non-empty descriptions</p>
+            </div>
+            <div class="p-4 rounded-xl bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200/50">
+                <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Exports</p>
+                <p class="text-2xl font-bold mt-1 text-amber-600"
+                    x-text="tokens?.markup?.all_time?.total_exports || 0">0</p>
+                <p class="text-xs text-slate-400 mt-0.5">Sessions exported</p>
             </div>
         </div>
     </div>

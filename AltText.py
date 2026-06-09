@@ -180,6 +180,10 @@ def init_db():
             gpt_input_tokens INTEGER DEFAULT 0,
             gpt_output_tokens INTEGER DEFAULT 0,
             gpt_cost REAL DEFAULT 0.0,
+            alttext_image_count INTEGER DEFAULT 0,
+            alttext_count INTEGER DEFAULT 0,
+            gpt_image_count INTEGER DEFAULT 0,
+            gpt_alttext_count INTEGER DEFAULT 0,
             error_msg TEXT,
             created_at TIMESTAMP {ts_default},
             FOREIGN KEY(batch_id) REFERENCES batches(id)
@@ -191,6 +195,13 @@ def init_db():
             role TEXT DEFAULT 'user',
             must_change_password BOOLEAN DEFAULT FALSE,
             last_password_change TIMESTAMP,
+            created_at TIMESTAMP {ts_default}
+        )''',
+        f'''CREATE TABLE IF NOT EXISTS markup_stats (
+            id {id_type},
+            pdf_filename TEXT,
+            image_count INTEGER DEFAULT 0,
+            alttext_count INTEGER DEFAULT 0,
             created_at TIMESTAMP {ts_default}
         )'''
     ]
@@ -220,6 +231,14 @@ def init_db():
                     cur.execute("ALTER TABLE jobs ADD COLUMN gpt_output_tokens INTEGER DEFAULT 0")
                 if 'gpt_cost' not in j_cols:
                     cur.execute("ALTER TABLE jobs ADD COLUMN gpt_cost REAL DEFAULT 0.0")
+                if 'alttext_image_count' not in j_cols:
+                    cur.execute("ALTER TABLE jobs ADD COLUMN alttext_image_count INTEGER DEFAULT 0")
+                if 'alttext_count' not in j_cols:
+                    cur.execute("ALTER TABLE jobs ADD COLUMN alttext_count INTEGER DEFAULT 0")
+                if 'gpt_image_count' not in j_cols:
+                    cur.execute("ALTER TABLE jobs ADD COLUMN gpt_image_count INTEGER DEFAULT 0")
+                if 'gpt_alttext_count' not in j_cols:
+                    cur.execute("ALTER TABLE jobs ADD COLUMN gpt_alttext_count INTEGER DEFAULT 0")
 
             else:
                 # PostgreSQL supports IF NOT EXISTS
@@ -229,6 +248,10 @@ def init_db():
                 cur.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS gpt_input_tokens INTEGER DEFAULT 0")
                 cur.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS gpt_output_tokens INTEGER DEFAULT 0")
                 cur.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS gpt_cost REAL DEFAULT 0.0")
+                cur.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS alttext_image_count INTEGER DEFAULT 0")
+                cur.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS alttext_count INTEGER DEFAULT 0")
+                cur.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS gpt_image_count INTEGER DEFAULT 0")
+                cur.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS gpt_alttext_count INTEGER DEFAULT 0")
             conn.commit()
         except Exception as e:
             logger.warning(f"Column migration warning (may be normal if columns exist): {e}")
@@ -1062,15 +1085,19 @@ def get_queue_status_route():
 @login_required
 def get_token_stats_route():
     stats = query_db("""
-        SELECT 
-            SUM(input_tokens) as total_gemini_in, 
-            SUM(output_tokens) as total_gemini_out, 
+        SELECT
+            SUM(input_tokens) as total_gemini_in,
+            SUM(output_tokens) as total_gemini_out,
             SUM(cost) as total_gemini_cost,
             SUM(gpt_input_tokens) as total_gpt_in,
             SUM(gpt_output_tokens) as total_gpt_out,
             SUM(gpt_cost) as total_gpt_cost,
+            SUM(alttext_image_count) as total_alttext_images,
+            SUM(alttext_count) as total_alttext_count,
+            SUM(gpt_image_count) as total_gpt_images,
+            SUM(gpt_alttext_count) as total_gpt_alttext_count,
             COUNT(*) as total_jobs
-        FROM jobs 
+        FROM jobs
         WHERE status = 'completed'
     """, one=True)
     
@@ -1091,13 +1118,29 @@ def get_token_stats_route():
     gpt_cost = stats['total_gpt_cost'] or 0.0
 
     total_jobs = stats['total_jobs'] or 0
-    
+
+    total_alttext_images = stats['total_alttext_images'] or 0
+    total_alttext_count  = stats['total_alttext_count']  or 0
+    total_gpt_images     = stats['total_gpt_images']     or 0
+    total_gpt_alttext    = stats['total_gpt_alttext_count'] or 0
+
     gem_today = today_stats['gemini_today_cost'] or 0.0 if today_stats else 0.0
     gpt_today = today_stats['gpt_today_cost'] or 0.0 if today_stats else 0.0
 
     gem_avg = gem_cost / total_jobs if total_jobs > 0 else 0
     gpt_avg = gpt_cost / total_jobs if total_jobs > 0 else 0
-    
+
+    markup_stats = query_db("""
+        SELECT
+            SUM(image_count) as total_images,
+            SUM(alttext_count) as total_alttext,
+            COUNT(*) as total_exports
+        FROM markup_stats
+    """, one=True)
+    markup_images  = markup_stats['total_images']  or 0 if markup_stats else 0
+    markup_alttext = markup_stats['total_alttext'] or 0 if markup_stats else 0
+    markup_exports = markup_stats['total_exports'] or 0 if markup_stats else 0
+
     return jsonify({
         "gemini": {
             "all_time": {
@@ -1105,6 +1148,8 @@ def get_token_stats_route():
                 "input_tokens": gem_in,
                 "output_tokens": gem_out,
                 "total_jobs": total_jobs,
+                "image_count": total_alttext_images,
+                "alttext_count": total_alttext_count,
                 "cost": { "total_cost": gem_cost }
             },
             "today": { "cost": { "total_cost": gem_today } },
@@ -1117,11 +1162,20 @@ def get_token_stats_route():
                 "input_tokens": gpt_in,
                 "output_tokens": gpt_out,
                 "total_jobs": total_jobs,
+                "image_count": total_gpt_images,
+                "alttext_count": total_gpt_alttext,
                 "cost": { "total_cost": gpt_cost }
             },
             "today": { "cost": { "total_cost": gpt_today } },
             "averages": { "cost_per_job": gpt_avg },
             "pricing": { "model": "gpt-4o" }
+        },
+        "markup": {
+            "all_time": {
+                "image_count": markup_images,
+                "alttext_count": markup_alttext,
+                "total_exports": markup_exports
+            }
         }
     })
 
@@ -1346,6 +1400,12 @@ def markup_export():
         output_filename = f"markup_{base_name}_alt_text.xlsx"
         output_path = os.path.join(OUTPUT_FOLDER, output_filename)
         write_markup_excel(results, output_path, pdf_filename=pdf_filename)
+        image_count = len(results)
+        alttext_count = sum(1 for r in results if str(r.get("long_alt", "")).strip())
+        query_db(
+            "INSERT INTO markup_stats (pdf_filename, image_count, alttext_count) VALUES (%s, %s, %s)",
+            (pdf_filename, image_count, alttext_count), commit=True
+        )
         return jsonify({"download_url": f"/download/{output_filename}"})
     except Exception as e:
         logger.error(f"Markup export failed: {e}", exc_info=True)
