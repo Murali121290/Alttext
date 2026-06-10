@@ -1345,6 +1345,13 @@ def markup_generate():
         output_path = os.path.join(OUTPUT_FOLDER, output_filename)
         write_markup_excel(results, output_path, pdf_filename=pdf_filename)
 
+        image_count = len(results)
+        alttext_count = sum(1 for r in results if str(r.get("long_alt", "")).strip())
+        query_db(
+            "INSERT INTO markup_stats (pdf_filename, image_count, alttext_count) VALUES (%s, %s, %s)",
+            (pdf_filename, image_count, alttext_count), commit=True
+        )
+
         return jsonify({
             "results": results,
             "download_url": f"/download/{output_filename}"
@@ -1416,12 +1423,6 @@ def markup_export():
         output_filename = f"markup_{base_name}_alt_text.xlsx"
         output_path = os.path.join(OUTPUT_FOLDER, output_filename)
         write_markup_excel(results, output_path, pdf_filename=pdf_filename)
-        image_count = len(results)
-        alttext_count = sum(1 for r in results if str(r.get("long_alt", "")).strip())
-        query_db(
-            "INSERT INTO markup_stats (pdf_filename, image_count, alttext_count) VALUES (%s, %s, %s)",
-            (pdf_filename, image_count, alttext_count), commit=True
-        )
         return jsonify({"download_url": f"/download/{output_filename}"})
     except Exception as e:
         logger.error(f"Markup export failed: {e}", exc_info=True)
