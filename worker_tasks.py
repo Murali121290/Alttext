@@ -94,9 +94,36 @@ def request_cancel(batch_id):
         _cancel_set.add(batch_id)
 
 
-def is_cancel_requested(batch_id):
+def _fetch_batch_status(batch_id, conn):
+    """Read batch status from DB — works across Gunicorn processes."""
+    try:
+        query = "SELECT status FROM batches WHERE id = %s"
+        if _is_sqlite():
+            query = query.replace('%s', '?')
+            cur = conn.cursor()
+            cur.execute(query, (batch_id,))
+            row = cur.fetchone()
+            cur.close()
+            return row[0] if row else None
+        else:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute(query, (batch_id,))
+            row = cur.fetchone()
+            cur.close()
+            return row['status'] if row else None
+    except Exception:
+        return None
+
+
+def is_cancel_requested(batch_id, conn=None):
+    # Fast path: in-memory flag (same process)
     with _cancel_lock:
-        return batch_id in _cancel_set
+        if batch_id in _cancel_set:
+            return True
+    # Cross-process path: check DB (Gunicorn spawns separate worker processes)
+    if conn is not None:
+        return _fetch_batch_status(batch_id, conn) == 'cancelled'
+    return False
 
 
 def _clear_cancel(batch_id):
@@ -1334,11 +1361,11 @@ def run_batch_processing(batch_id, files_info, run_gemini=True, run_gpt=False):
     try:
         query_db("UPDATE batches SET status = 'processing' WHERE id = %s", (batch_id,), commit=True, conn=conn)
 
-        if is_cancel_requested(batch_id):
+        if is_cancel_requested(batch_id, conn):
             raise _BatchCancelledError()
 
         for job_id, filepath in files_info:
-            if is_cancel_requested(batch_id):
+            if is_cancel_requested(batch_id, conn):
                 raise _BatchCancelledError()
             logger.info(f"Worker processing job {job_id}: {filepath}")
             query_db("UPDATE jobs SET status = 'processing' WHERE id = %s", (job_id,), commit=True, conn=conn)
@@ -1416,7 +1443,7 @@ def run_batch_processing(batch_id, files_info, run_gemini=True, run_gpt=False):
                         if completed_count % 25 == 0 or completed_count == len(pages_data):
                             logger.info(f"Job {job_id}: Progress {completed_count}/{len(pages_data)} pages completed")
 
-                        if is_cancel_requested(batch_id):
+                        if is_cancel_requested(batch_id, conn):
                             for f in list(future_to_page):
                                 f.cancel()
                             raise _BatchCancelledError()
