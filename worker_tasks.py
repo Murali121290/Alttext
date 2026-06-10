@@ -80,6 +80,30 @@ _openai_client = None
 _gemini_client_lock = threading.Lock()
 _openai_client_lock = threading.Lock()
 
+# --- Cancel flag registry (thread-safe) ---
+_cancel_set = set()
+_cancel_lock = threading.Lock()
+
+
+class _BatchCancelledError(BaseException):
+    pass
+
+
+def request_cancel(batch_id):
+    with _cancel_lock:
+        _cancel_set.add(batch_id)
+
+
+def is_cancel_requested(batch_id):
+    with _cancel_lock:
+        return batch_id in _cancel_set
+
+
+def _clear_cancel(batch_id):
+    with _cancel_lock:
+        _cancel_set.discard(batch_id)
+
+
 def get_gemini_client():
     global _gemini_client
     if _gemini_client is None:
@@ -1310,7 +1334,12 @@ def run_batch_processing(batch_id, files_info, run_gemini=True, run_gpt=False):
     try:
         query_db("UPDATE batches SET status = 'processing' WHERE id = %s", (batch_id,), commit=True, conn=conn)
 
+        if is_cancel_requested(batch_id):
+            raise _BatchCancelledError()
+
         for job_id, filepath in files_info:
+            if is_cancel_requested(batch_id):
+                raise _BatchCancelledError()
             logger.info(f"Worker processing job {job_id}: {filepath}")
             query_db("UPDATE jobs SET status = 'processing' WHERE id = %s", (job_id,), commit=True, conn=conn)
 
@@ -1386,6 +1415,11 @@ def run_batch_processing(batch_id, files_info, run_gemini=True, run_gpt=False):
 
                         if completed_count % 25 == 0 or completed_count == len(pages_data):
                             logger.info(f"Job {job_id}: Progress {completed_count}/{len(pages_data)} pages completed")
+
+                        if is_cancel_requested(batch_id):
+                            for f in list(future_to_page):
+                                f.cancel()
+                            raise _BatchCancelledError()
 
                 wb = Workbook()
                 ws = wb.active
@@ -1529,6 +1563,16 @@ def run_batch_processing(batch_id, files_info, run_gemini=True, run_gpt=False):
 
         query_db("UPDATE batches SET status = 'completed' WHERE id = %s", (batch_id,), commit=True, conn=conn)
 
+    except _BatchCancelledError:
+        logger.info(f"Batch {batch_id}: Cancelled by user request.")
+        try:
+            query_db("UPDATE batches SET status = 'cancelled' WHERE id = %s", (batch_id,), commit=True, conn=conn)
+            query_db(
+                "UPDATE jobs SET status = 'cancelled' WHERE batch_id = %s AND status IN ('pending', 'processing')",
+                (batch_id,), commit=True, conn=conn
+            )
+        except Exception:
+            pass
     except Exception as e:
         logger.error(f"Batch {batch_id} failed CRITICALLY: {e}")
         try:
@@ -1536,5 +1580,6 @@ def run_batch_processing(batch_id, files_info, run_gemini=True, run_gpt=False):
         except Exception:
             pass
     finally:
+        _clear_cancel(batch_id)
         if conn:
             conn.close()

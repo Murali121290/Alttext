@@ -19,7 +19,8 @@
                                 'bg-emerald-50 text-emerald-700 border-emerald-100': batch.status === 'completed',
                                 'bg-amber-50 text-amber-700 border-amber-100': batch.status === 'processing',
                                 'bg-red-50 text-red-700 border-red-100': batch.status === 'failed',
-                                'bg-slate-50 text-slate-700 border-slate-100': batch.status === 'pending'
+                                'bg-slate-50 text-slate-700 border-slate-100': batch.status === 'pending',
+                                'bg-orange-50 text-orange-700 border-orange-100': batch.status === 'cancelled'
                             }">
                             <span x-text="capitalize(batch.status)"></span>
                         </span>
@@ -29,10 +30,20 @@
                     Created on <span x-text="formatDate(batch.created_at)"></span>
                 </p>
             </div>
-            <button @click="refresh()"
-                class="p-2 rounded-xl text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors">
-                <i data-lucide="refresh-cw" class="h-5 w-5" :class="{ 'animate-spin': loading }"></i>
-            </button>
+            <div class="flex items-center gap-2">
+                <template x-if="batch && (batch.status === 'processing' || batch.status === 'pending')">
+                    <button @click="cancelBatch()"
+                        :disabled="cancelling"
+                        class="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 text-sm font-medium transition-colors disabled:opacity-50">
+                        <i data-lucide="x-circle" class="h-4 w-4"></i>
+                        <span x-text="cancelling ? 'Cancelling...' : 'Cancel'"></span>
+                    </button>
+                </template>
+                <button @click="refresh()"
+                    class="p-2 rounded-xl text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors">
+                    <i data-lucide="refresh-cw" class="h-5 w-5" :class="{ 'animate-spin': loading }"></i>
+                </button>
+            </div>
         </div>
     </div>
 
@@ -74,7 +85,8 @@
                                 'bg-emerald-50 text-emerald-700 border-emerald-100': job.status === 'completed',
                                 'bg-amber-50 text-amber-700 border-amber-100': job.status === 'processing',
                                 'bg-red-50 text-red-700 border-red-100': job.status === 'failed',
-                                'bg-slate-50 text-slate-700 border-slate-100': job.status === 'pending'
+                                'bg-slate-50 text-slate-700 border-slate-100': job.status === 'pending',
+                                'bg-orange-50 text-orange-700 border-orange-100': job.status === 'cancelled'
                             }">
                             <span x-text="capitalize(job.status)"></span>
                         </span>
@@ -137,14 +149,35 @@
             batch: null,
             jobs: [],
             loading: false,
+            cancelling: false,
             init() {
                 this.refresh();
-                // Poll if batch is not completed/failed
+                // Poll while batch is active
                 this.pollInterval = setInterval(() => {
                     if (this.batch && (this.batch.status === 'pending' || this.batch.status === 'processing')) {
                         this.refresh(true);
                     }
                 }, 3000);
+            },
+            async cancelBatch() {
+                if (this.cancelling) return;
+                this.cancelling = true;
+                try {
+                    const res = await fetch(window._BASE + `/api/queue/batch/${batchId}/cancel`, {
+                        method: 'POST',
+                        credentials: 'same-origin'
+                    });
+                    if (res.ok) {
+                        await this.refresh(true);
+                    } else {
+                        const data = await res.json().catch(() => ({}));
+                        alert(data.error || 'Failed to cancel batch.');
+                    }
+                } catch (e) {
+                    console.error(e);
+                } finally {
+                    this.cancelling = false;
+                }
             },
             downloadedJobs: new Set(),
             async refresh(silent = false) {

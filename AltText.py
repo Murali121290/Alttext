@@ -925,6 +925,22 @@ def create_batch_route():
         "success": True
     })
 
+@app.route("/api/queue/batch/<int:batch_id>/cancel", methods=["POST"])
+@login_required
+def cancel_batch_route(batch_id):
+    batch = query_db("SELECT * FROM batches WHERE id = %s", (batch_id,), one=True)
+    if not batch:
+        return jsonify({"error": "Batch not found"}), 404
+    if batch['status'] not in ('pending', 'processing'):
+        return jsonify({"error": f"Batch cannot be cancelled (status: {batch['status']})"}), 400
+    worker_tasks.request_cancel(batch_id)
+    query_db("UPDATE jobs SET status = 'cancelled' WHERE batch_id = %s AND status = 'pending'",
+             (batch_id,), commit=True)
+    query_db("UPDATE batches SET status = 'cancelled' WHERE id = %s", (batch_id,), commit=True)
+    logger.info(f"Batch {batch_id} cancel requested")
+    return jsonify({"success": True})
+
+
 import zipfile
 from utils.pdf_image_extractor import extract_images_to_excel
 

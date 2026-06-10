@@ -39,7 +39,8 @@
                             'bg-emerald-100 text-emerald-600': batch.status === 'completed',
                             'bg-amber-100 text-amber-600': batch.status === 'processing',
                             'bg-red-100 text-red-600': batch.status === 'failed',
-                            'bg-slate-100 text-slate-600': batch.status === 'pending'
+                            'bg-slate-100 text-slate-600': batch.status === 'pending',
+                            'bg-orange-100 text-orange-600': batch.status === 'cancelled'
                         }">
                             <i data-lucide="folder" class="h-5 w-5"></i>
                         </div>
@@ -69,13 +70,15 @@
                                 'bg-emerald-50 text-emerald-700 border-emerald-100': batch.status === 'completed',
                                 'bg-amber-50 text-amber-700 border-amber-100': batch.status === 'processing',
                                 'bg-red-50 text-red-700 border-red-100': batch.status === 'failed',
-                                'bg-slate-50 text-slate-700 border-slate-100': batch.status === 'pending'
+                                'bg-slate-50 text-slate-700 border-slate-100': batch.status === 'pending',
+                                'bg-orange-50 text-orange-700 border-orange-100': batch.status === 'cancelled'
                             }">
                             <span class="w-1.5 h-1.5 rounded-full" :class="{
                                 'bg-emerald-500': batch.status === 'completed',
                                 'bg-amber-500': batch.status === 'processing',
                                 'bg-red-500': batch.status === 'failed',
-                                'bg-slate-500': batch.status === 'pending'
+                                'bg-slate-500': batch.status === 'pending',
+                                'bg-orange-500': batch.status === 'cancelled'
                             }"></span>
                             <span x-text="capitalize(batch.status)"></span>
                         </span>
@@ -94,7 +97,8 @@
                                         'bg-emerald-500': batch.status === 'completed',
                                         'bg-amber-500': batch.status === 'processing',
                                         'bg-red-500': batch.status === 'failed',
-                                        'bg-slate-400': batch.status === 'pending'
+                                        'bg-slate-400': batch.status === 'pending',
+                                        'bg-orange-400': batch.status === 'cancelled'
                                     }"
                                     :style="'width: ' + (batch.total_jobs > 0 ? (batch.completed_jobs / batch.total_jobs) * 100 : 0) + '%'">
                                 </div>
