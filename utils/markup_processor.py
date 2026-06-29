@@ -157,11 +157,35 @@ def refine_markup_region(png_bytes: bytes, previous_short: str,
         prompt=prompt,
     )
 
-    response = client.models.generate_content(
-        model=MODEL_NAME,
-        contents=[refine_prompt, image],
-        config={"temperature": 0.3, "top_p": 0.9},
-    )
+    MAX_RETRIES = 5
+    INITIAL_WAIT = 1
+    import time
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=[refine_prompt, image],
+                config={"temperature": 0.3, "top_p": 0.9},
+            )
+            break
+        except Exception as e:
+            error_msg = str(e)
+            is_transient_error = (
+                "429" in error_msg or 
+                "502" in error_msg or 
+                "500" in error_msg or 
+                "503" in error_msg or 
+                "quota" in error_msg.lower() or
+                "timed out" in error_msg.lower() or
+                "timeout" in error_msg.lower() or
+                "connection" in error_msg.lower()
+            )
+            if is_transient_error and attempt < MAX_RETRIES - 1:
+                sleep_time = INITIAL_WAIT * (2 ** (attempt + 1))
+                logger.warning(f"Markup Refine Gemini transient error: {e}. Retrying in {sleep_time}s (Attempt {attempt+1}/{MAX_RETRIES})...")
+                time.sleep(sleep_time)
+                continue
+            raise
 
     raw = (response.text or "").strip()
     code_block = re.search(r"```(?:json)?\s*(.*?)```", raw, re.DOTALL)
@@ -192,11 +216,35 @@ def call_gemini_for_region(png_bytes: bytes) -> dict:
     if image.width > 2048 or image.height > 2048:
         image.thumbnail((2048, 2048), Image.LANCZOS)
 
-    response = client.models.generate_content(
-        model=MODEL_NAME,
-        contents=[MARKUP_SYSTEM_PROMPT, image],
-        config={"temperature": 0.1, "top_p": 0.9},
-    )
+    MAX_RETRIES = 5
+    INITIAL_WAIT = 1
+    import time
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=[MARKUP_SYSTEM_PROMPT, image],
+                config={"temperature": 0.1, "top_p": 0.9},
+            )
+            break
+        except Exception as e:
+            error_msg = str(e)
+            is_transient_error = (
+                "429" in error_msg or 
+                "502" in error_msg or 
+                "500" in error_msg or 
+                "503" in error_msg or 
+                "quota" in error_msg.lower() or
+                "timed out" in error_msg.lower() or
+                "timeout" in error_msg.lower() or
+                "connection" in error_msg.lower()
+            )
+            if is_transient_error and attempt < MAX_RETRIES - 1:
+                sleep_time = INITIAL_WAIT * (2 ** (attempt + 1))
+                logger.warning(f"Markup Gemini transient error: {e}. Retrying in {sleep_time}s (Attempt {attempt+1}/{MAX_RETRIES})...")
+                time.sleep(sleep_time)
+                continue
+            raise
 
     raw = (response.text or "").strip()
 
