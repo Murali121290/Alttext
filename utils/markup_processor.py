@@ -44,9 +44,24 @@ def _get_client():
             if _client is None:
                 if not GEMINI_API_KEY:
                     raise ValueError("GEMINI_API_KEY not set in environment")
+                
+                # Check for SSL_VERIFY configuration to bypass SSL certificate checks if needed
+                import ssl
+                ssl_verify_str = os.getenv("SSL_VERIFY", "True").lower()
+                ssl_verify = ssl_verify_str not in ("false", "0", "no", "off")
+                
+                http_opts = {"timeout": 120000}
+                if not ssl_verify:
+                    unverified_ssl_context = ssl.create_default_context()
+                    unverified_ssl_context.check_hostname = False
+                    unverified_ssl_context.verify_mode = ssl.CERT_NONE
+                    http_opts["client_args"] = {"verify": unverified_ssl_context}
+                    http_opts["async_client_args"] = {"verify": unverified_ssl_context}
+                    logger.info("Markup client: Outbound Gemini API SSL verification disabled.")
+
                 _client = genai.Client(
                     api_key=GEMINI_API_KEY,
-                    http_options={"timeout": 120000}
+                    http_options=http_opts
                 )
     return _client
 
@@ -102,7 +117,7 @@ def crop_region_to_png(pdf_path: str, page_num: int,
             y1_pct * ph,
         )
         mat = fitz.Matrix(2, 2)
-        pix = page.get_pixmap(matrix=mat, clip=clip, alpha=False)
+        pix = page.get_pixmap(matrix=mat, clip=clip, alpha=False, annots=False)
         return pix.tobytes("png")
     finally:
         doc.close()

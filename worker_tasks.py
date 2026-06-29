@@ -138,9 +138,21 @@ def get_gemini_client():
             if _gemini_client is None:
                 if not GEMINI_API_KEY:
                     raise ValueError("GEMINI_API_KEY not set")
-                # FIX 10 — 120 s timeout prevents a hung request from blocking a worker thread forever.
-                # Note: google-genai http_options 'timeout' is in milliseconds, so 120000 = 120 seconds.
-                _gemini_client = genai.Client(api_key=GEMINI_API_KEY, http_options={"timeout": 120000})
+                # Check for SSL_VERIFY configuration to bypass SSL certificate checks if needed
+                import ssl
+                ssl_verify_str = os.getenv("SSL_VERIFY", "True").lower()
+                ssl_verify = ssl_verify_str not in ("false", "0", "no", "off")
+                
+                http_opts = {"timeout": 120000}
+                if not ssl_verify:
+                    unverified_ssl_context = ssl.create_default_context()
+                    unverified_ssl_context.check_hostname = False
+                    unverified_ssl_context.verify_mode = ssl.CERT_NONE
+                    http_opts["client_args"] = {"verify": unverified_ssl_context}
+                    http_opts["async_client_args"] = {"verify": unverified_ssl_context}
+                    logger.info("Outbound Gemini API SSL verification disabled.")
+
+                _gemini_client = genai.Client(api_key=GEMINI_API_KEY, http_options=http_opts)
     return _gemini_client
 
 def get_openai_client():
@@ -152,7 +164,18 @@ def get_openai_client():
                     raise ImportError("openai package not installed. Run: pip install openai")
                 if not OPENAI_API_KEY:
                     raise ValueError("OPENAI_API_KEY not set in .env")
-                _openai_client = _OpenAI(api_key=OPENAI_API_KEY)
+                
+                # Check for SSL_VERIFY configuration to bypass SSL certificate checks if needed
+                ssl_verify_str = os.getenv("SSL_VERIFY", "True").lower()
+                ssl_verify = ssl_verify_str not in ("false", "0", "no", "off")
+                
+                if not ssl_verify:
+                    import httpx
+                    custom_http_client = httpx.Client(verify=False)
+                    _openai_client = _OpenAI(api_key=OPENAI_API_KEY, http_client=custom_http_client)
+                    logger.info("Outbound OpenAI API SSL verification disabled.")
+                else:
+                    _openai_client = _OpenAI(api_key=OPENAI_API_KEY)
     return _openai_client
 
 # Global concurrency semaphores (shared across ALL users and threads).
@@ -1115,6 +1138,117 @@ def _normalize_figure_number(value):
     return f"Figure {s}"
 
 
+def crop_pdf_region_to_png(filepath, page_num, x0_pct, y0_pct, x1_pct, y1_pct):
+    """
+    Crop a percentage-based bounding box from a PDF page and return PNG bytes.
+    Use annots=False to get a clean crop without rendering annotation borders.
+    """
+    doc = fitz.open(filepath)
+    try:
+        page = doc[page_num]
+        pw = page.rect.width
+        ph = page.rect.height
+        clip = fitz.Rect(
+            x0_pct * pw,
+            y0_pct * ph,
+            x1_pct * pw,
+            y1_pct * ph,
+        )
+        mat = fitz.Matrix(2, 2)
+        pix = page.get_pixmap(matrix=mat, clip=clip, alpha=False, annots=False)
+        return pix.tobytes("png")
+    finally:
+        doc.close()
+
+
+def process_annotated_region(filepath, annot, absolute_page_num, annot_idx):
+    """
+    Render crop, send to Gemini, and return a dictionary ready for the Excel builder.
+    """
+    from utils.markup_processor import MARKUP_SYSTEM_PROMPT
+    client = get_gemini_client()
+    x0, y0, x1, y1 = annot["x0_pct"], annot["y0_pct"], annot["x1_pct"], annot["y1_pct"]
+    
+    png_bytes = crop_pdf_region_to_png(filepath, annot["page"], x0, y0, x1, y1)
+    
+    image = Image.open(io.BytesIO(png_bytes))
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+    if image.width > 3072 or image.height > 3072:
+        image.thumbnail((3072, 3072))
+        
+    MAX_RETRIES = 5
+    INITIAL_WAIT = 1
+    total_in = 0
+    total_out = 0
+    item = {}
+    
+    for attempt in range(MAX_RETRIES):
+        try:
+            with _GEMINI_SEMAPHORE:
+                response = client.models.generate_content(
+                    model=MODEL_NAME,
+                    contents=[MARKUP_SYSTEM_PROMPT, image],
+                    config={"temperature": 0.1, "top_p": 0.9}
+                )
+            if response.usage_metadata:
+                total_in += (response.usage_metadata.prompt_token_count or 0)
+                total_out += (response.usage_metadata.candidates_token_count or 0)
+                
+            raw_text = (response.text or "").strip()
+            if not raw_text:
+                raise ValueError("Gemini returned empty response")
+                
+            code_block = re.search(r'```(?:json)?\s*(.*?)```', raw_text, re.DOTALL)
+            if code_block:
+                json_str = code_block.group(1).strip()
+            else:
+                m = re.search(r"\{.*\}", raw_text, re.DOTALL)
+                json_str = m.group() if m else raw_text
+                
+            data = json.loads(json_str)
+            item = {
+                "page": absolute_page_num,
+                "figure_number": annot.get("label") or f"Figure {annot_idx}",
+                "Image": [int(y0 * 1000), int(x0 * 1000), int(y1 * 1000), int(x1 * 1000)],
+                "short_alt": data.get("short_alt", ""),
+                "long_alt": data.get("long_alt", ""),
+                "context_type": data.get("content_type", "General"),
+                "domain": "General"
+            }
+            break
+        except Exception as e:
+            error_msg = str(e)
+            is_transient_error = (
+                "429" in error_msg or 
+                "502" in error_msg or 
+                "500" in error_msg or 
+                "503" in error_msg or 
+                "quota" in error_msg.lower() or
+                "timed out" in error_msg.lower() or
+                "timeout" in error_msg.lower() or
+                "connection" in error_msg.lower()
+            )
+            if is_transient_error and attempt < MAX_RETRIES - 1:
+                sleep_time = INITIAL_WAIT * (2 ** (attempt + 1))
+                time.sleep(sleep_time)
+                continue
+                
+            logger.error(f"Gemini Error on page {absolute_page_num} annot {annot_idx}: {e}")
+            item = {
+                "page": absolute_page_num,
+                "figure_number": annot.get("label") or f"Figure {annot_idx}",
+                "Image": [int(y0 * 1000), int(x0 * 1000), int(y1 * 1000), int(x1 * 1000)],
+                "short_alt": "Error processing region",
+                "long_alt": str(e),
+                "context_type": "Error",
+                "domain": "Error"
+            }
+            break
+            
+    return item, png_bytes, total_in, total_out
+
+
 def process_single_image(img_data, absolute_page_num, run_qc=False, retry_attempt=0):
     """Process one page image through Gemini.
 
@@ -1409,44 +1543,108 @@ def run_batch_processing(batch_id, files_info, run_gemini=True, run_gpt=False):
                 total_pages = len(doc)
                 logger.info(f"Job {job_id}: PDF has {total_pages} pages")
 
-                logger.info(f"Job {job_id}: Rendering pages...")
-                pages_data = render_pages(doc)
-                doc.close()
-                doc = None
-                logger.info(f"Job {job_id}: Rendering done. Submitting {len(pages_data)} pages to {MAX_WORKERS} workers...")
+                # Check if this PDF has annotations (markup)
+                _MARKUP_ANNOT_TYPES = {0, 2, 4, 5, 8, 9, 10, 11, 13, 15, 20}
+                annotations = []
+                for page_idx in range(total_pages):
+                    page = doc[page_idx]
+                    pw = page.rect.width
+                    ph = page.rect.height
+                    for annot in page.annots():
+                        if annot.type[0] not in _MARKUP_ANNOT_TYPES:
+                            continue
+                        r = annot.rect
+                        if pw == 0 or ph == 0:
+                            continue
+                        if (r.width / pw) < 0.003 or (r.height / ph) < 0.003:
+                            continue
+                        label = (annot.info.get("content") or annot.info.get("title") or "").strip()
+                        annotations.append({
+                            "page": page_idx,
+                            "x0_pct": r.x0 / pw,
+                            "y0_pct": r.y0 / ph,
+                            "x1_pct": r.x1 / pw,
+                            "y1_pct": r.y1 / ph,
+                            "label": label,
+                        })
 
                 all_items = []
                 total_in = 0
                 total_out = 0
+                pages_data = []
 
-                # FIX 5 — Submit process_single_image_with_retry (the QC retry wrapper)
-                # instead of process_single_image directly. Previously the retry wrapper
-                # was defined but never called, making it dead code.
-                with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-                    future_to_page = {
-                        executor.submit(process_single_image_with_retry, img_data, absolute_page_num): absolute_page_num
-                        for img_data, absolute_page_num in pages_data
-                    }
+                if len(annotations) > 0:
+                    logger.info(f"Job {job_id}: Found {len(annotations)} markup annotations. Processing automatically via annotations.")
+                    doc.close()
+                    doc = None
 
-                    completed_count = 0
-                    for future in as_completed(future_to_page):
-                        absolute_page_num = future_to_page[future]
-                        completed_count += 1
-                        try:
-                            items, i_tok, o_tok = future.result()
-                            all_items.extend(items)
-                            total_in += i_tok
-                            total_out += o_tok
-                        except Exception as e:
-                            logger.error(f"Page processing failed for page {absolute_page_num}: {e}")
+                    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                        future_to_annot = {
+                            executor.submit(
+                                process_annotated_region,
+                                filepath,
+                                annot,
+                                annot["page"] + 1,
+                                idx + 1
+                            ): annot
+                            for idx, annot in enumerate(annotations)
+                        }
 
-                        if completed_count % 25 == 0 or completed_count == len(pages_data):
-                            logger.info(f"Job {job_id}: Progress {completed_count}/{len(pages_data)} pages completed")
+                        completed_count = 0
+                        for future in as_completed(future_to_annot):
+                            annot = future_to_annot[future]
+                            completed_count += 1
+                            try:
+                                item, png_bytes, i_tok, o_tok = future.result()
+                                item["crop_png_bytes"] = png_bytes
+                                all_items.append(item)
+                                total_in += i_tok
+                                total_out += o_tok
+                            except Exception as e:
+                                logger.error(f"Annotation processing failed for page {annot['page'] + 1}: {e}")
 
-                        if is_cancel_requested(batch_id, conn):
-                            for f in list(future_to_page):
-                                f.cancel()
-                            raise _BatchCancelledError()
+                            if completed_count % 25 == 0 or completed_count == len(annotations):
+                                logger.info(f"Job {job_id}: Progress {completed_count}/{len(annotations)} annotations completed")
+
+                            if is_cancel_requested(batch_id, conn):
+                                for f in list(future_to_annot):
+                                    f.cancel()
+                                raise _BatchCancelledError()
+                else:
+                    logger.info(f"Job {job_id}: Rendering pages...")
+                    pages_data = render_pages(doc)
+                    doc.close()
+                    doc = None
+                    logger.info(f"Job {job_id}: Rendering done. Submitting {len(pages_data)} pages to {MAX_WORKERS} workers...")
+
+                    # FIX 5 — Submit process_single_image_with_retry (the QC retry wrapper)
+                    # instead of process_single_image directly. Previously the retry wrapper
+                    # was defined but never called, making it dead code.
+                    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                        future_to_page = {
+                            executor.submit(process_single_image_with_retry, img_data, absolute_page_num): absolute_page_num
+                            for img_data, absolute_page_num in pages_data
+                        }
+
+                        completed_count = 0
+                        for future in as_completed(future_to_page):
+                            absolute_page_num = future_to_page[future]
+                            completed_count += 1
+                            try:
+                                items, i_tok, o_tok = future.result()
+                                all_items.extend(items)
+                                total_in += i_tok
+                                total_out += o_tok
+                            except Exception as e:
+                                logger.error(f"Page processing failed for page {absolute_page_num}: {e}")
+
+                            if completed_count % 25 == 0 or completed_count == len(pages_data):
+                                logger.info(f"Job {job_id}: Progress {completed_count}/{len(pages_data)} pages completed")
+
+                            if is_cancel_requested(batch_id, conn):
+                                for f in list(future_to_page):
+                                    f.cancel()
+                                raise _BatchCancelledError()
 
                 wb = Workbook()
                 ws = wb.active
@@ -1491,49 +1689,81 @@ def run_batch_processing(batch_id, files_info, run_gemini=True, run_gpt=False):
                     ]
                     ws.append(row)
 
-                    bbox = item.get("Image")
-                    if isinstance(bbox, list) and len(bbox) == 4:
+                    crop_bytes = item.get("crop_png_bytes")
+                    if crop_bytes:
                         try:
-                            ymin, xmin, ymax, xmax = bbox
+                            pil_img = Image.open(io.BytesIO(crop_bytes))
+                            if pil_img.mode != "RGB":
+                                pil_img = pil_img.convert("RGB")
+                            base_filename = os.path.splitext(pdf_filename)[0]
+                            fig_num = str(item.get("figure_number", "unk")).replace(" ", "_").replace(".", "_")
                             page_num = item.get("page")
-                            matching_page_data = next((data for data, pnum in pages_data if pnum == page_num), None)
+                            image_filename = f"{base_filename}_page{page_num}_{fig_num}.png"
+                            image_path = os.path.join(OUTPUT_FOLDER, "extracted_images", image_filename)
+                            pil_img.save(image_path)
 
-                            if matching_page_data:
-                                pil_img = Image.open(io.BytesIO(matching_page_data))
-                                img_w, img_h = pil_img.size
+                            xl_img = OpenpyxlImage(image_path)
+                            max_size = 200
+                            ratio = min(max_size / xl_img.width, max_size / xl_img.height)
+                            if ratio < 1:
+                                xl_img.width = int(xl_img.width * ratio)
+                                xl_img.height = int(xl_img.height * ratio)
 
-                                crop_ymin = int((ymin / 1000.0) * img_h)
-                                crop_xmin = int((xmin / 1000.0) * img_w)
-                                crop_ymax = int((ymax / 1000.0) * img_h)
-                                crop_xmax = int((xmax / 1000.0) * img_w)
+                            current_row = ws.max_row
+                            cell_id = f"D{current_row}"
+                            ws.add_image(xl_img, cell_id)
 
-                                cropped_img = pil_img.crop((crop_xmin, crop_ymin, crop_xmax, crop_ymax))
-
-                                base_filename = os.path.splitext(pdf_filename)[0]
-                                fig_num = str(item.get("figure_number", "unk")).replace(" ", "_").replace(".", "_")
-                                image_filename = f"{base_filename}_page{page_num}_{fig_num}.png"
-                                image_path = os.path.join(OUTPUT_FOLDER, "extracted_images", image_filename)
-                                cropped_img.save(image_path)
-
-                                xl_img = OpenpyxlImage(image_path)
-                                max_size = 200
-                                ratio = min(max_size / xl_img.width, max_size / xl_img.height)
-                                if ratio < 1:
-                                    xl_img.width = int(xl_img.width * ratio)
-                                    xl_img.height = int(xl_img.height * ratio)
-
-                                current_row = ws.max_row
-                                cell_id = f"D{current_row}"
-                                ws.add_image(xl_img, cell_id)
-
-                                ws.row_dimensions[current_row].height = (xl_img.height * 0.75) + 10
-                                current_col_width = ws.column_dimensions['D'].width or 10
-                                needed_width = (xl_img.width / 7) + 2
-                                if needed_width > current_col_width:
-                                    ws.column_dimensions['D'].width = needed_width
-
+                            ws.row_dimensions[current_row].height = (xl_img.height * 0.75) + 10
+                            current_col_width = ws.column_dimensions['D'].width or 10
+                            needed_width = (xl_img.width / 7) + 2
+                            if needed_width > current_col_width:
+                                ws.column_dimensions['D'].width = needed_width
                         except Exception as img_err:
-                            logger.error(f"Failed to process image bounding box on page {item.get('page')}: {img_err}")
+                            logger.error(f"Failed to process crop_png_bytes on page {item.get('page')}: {img_err}")
+                    else:
+                        bbox = item.get("Image")
+                        if isinstance(bbox, list) and len(bbox) == 4:
+                            try:
+                                ymin, xmin, ymax, xmax = bbox
+                                page_num = item.get("page")
+                                matching_page_data = next((data for data, pnum in pages_data if pnum == page_num), None)
+
+                                if matching_page_data:
+                                    pil_img = Image.open(io.BytesIO(matching_page_data))
+                                    img_w, img_h = pil_img.size
+
+                                    crop_ymin = int((ymin / 1000.0) * img_h)
+                                    crop_xmin = int((xmin / 1000.0) * img_w)
+                                    crop_ymax = int((ymax / 1000.0) * img_h)
+                                    crop_xmax = int((xmax / 1000.0) * img_w)
+
+                                    cropped_img = pil_img.crop((crop_xmin, crop_ymin, crop_xmax, crop_ymax))
+
+                                    base_filename = os.path.splitext(pdf_filename)[0]
+                                    fig_num = str(item.get("figure_number", "unk")).replace(" ", "_").replace(".", "_")
+                                    image_filename = f"{base_filename}_page{page_num}_{fig_num}.png"
+                                    image_path = os.path.join(OUTPUT_FOLDER, "extracted_images", image_filename)
+                                    cropped_img.save(image_path)
+
+                                    xl_img = OpenpyxlImage(image_path)
+                                    max_size = 200
+                                    ratio = min(max_size / xl_img.width, max_size / xl_img.height)
+                                    if ratio < 1:
+                                        xl_img.width = int(xl_img.width * ratio)
+                                        xl_img.height = int(xl_img.height * ratio)
+
+                                    current_row = ws.max_row
+                                    cell_id = f"D{current_row}"
+                                    ws.add_image(xl_img, cell_id)
+
+                                    ws.row_dimensions[current_row].height = (xl_img.height * 0.75) + 10
+                                    current_col_width = ws.column_dimensions['D'].width or 10
+                                    needed_width = (xl_img.width / 7) + 2
+                                    if needed_width > current_col_width:
+                                        ws.column_dimensions['D'].width = needed_width
+
+                            except Exception as img_err:
+                                logger.error(f"Failed to process image bounding box on page {item.get('page')}: {img_err}")
 
                 out_name = f"{os.path.splitext(pdf_filename)[0]}_alt_text.xlsx"
                 out_path = os.path.join(OUTPUT_FOLDER, out_name)
