@@ -10,3 +10,4 @@ markup_sessions/
 logs/
 .DS_Store
 *.log
+postgres_data

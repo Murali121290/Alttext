@@ -18,6 +18,7 @@ services:
       - SECRET_KEY=${SECRET_KEY}
       - FLASK_DEBUG=false
       - ALTTEXT_SERVICE_TOKEN=${ALTTEXT_SERVICE_TOKEN}
+      - SSL_VERIFY=${SSL_VERIFY}
     depends_on:
       db:
         condition: service_healthy

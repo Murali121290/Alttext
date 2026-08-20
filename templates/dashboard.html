@@ -343,8 +343,56 @@
     </div>
 </div>
 
+<!-- Monthly Cost -->
+<div class="bg-white rounded-2xl border border-slate-200/60 shadow-sm shadow-slate-200/50 overflow-hidden mt-6">
+    <div class="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+            <div class="p-2.5 rounded-xl bg-gradient-to-br from-indigo-100 to-blue-100">
+                <i data-lucide="calendar" class="h-5 w-5 text-indigo-600"></i>
+            </div>
+            <div>
+                <h3 class="font-semibold text-slate-800">Monthly Cost</h3>
+                <p class="text-sm text-slate-500">Gemini + GPT-4o spend, last 12 months</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="overflow-x-auto" x-show="monthly && monthly.length > 0">
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="text-left text-xs font-medium text-slate-500 uppercase tracking-wider border-b border-slate-100">
+                    <th class="px-6 py-3">Month</th>
+                    <th class="px-6 py-3 text-right">Jobs</th>
+                    <th class="px-6 py-3 text-right">Gemini Cost</th>
+                    <th class="px-6 py-3 text-right">GPT Cost</th>
+                    <th class="px-6 py-3 text-right">Total Cost</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+                <template x-for="m in monthly" :key="m.month">
+                    <tr class="hover:bg-slate-50 transition-colors">
+                        <td class="px-6 py-3 font-medium text-slate-800" x-text="formatMonth(m.month)"></td>
+                        <td class="px-6 py-3 text-right text-slate-600" x-text="m.total_jobs"></td>
+                        <td class="px-6 py-3 text-right text-slate-600" x-text="formatCost(m.gemini.cost)"></td>
+                        <td class="px-6 py-3 text-right text-slate-600" x-text="formatCost(m.gpt.cost)"></td>
+                        <td class="px-6 py-3 text-right font-semibold text-indigo-600" x-text="formatCost(m.total_cost)"></td>
+                    </tr>
+                </template>
+            </tbody>
+        </table>
+    </div>
+
+    <div x-show="!monthly || monthly.length === 0" class="py-16 text-center">
+        <div class="w-16 h-16 mx-auto mb-4 rounded-2xl bg-slate-100 flex items-center justify-center">
+            <i data-lucide="calendar" class="h-8 w-8 text-slate-400"></i>
+        </div>
+        <p class="font-medium text-slate-600 mb-1">No cost data yet</p>
+        <p class="text-sm text-slate-500">Monthly totals will appear once jobs complete</p>
+    </div>
+</div>
+
 <!-- Recent Batches -->
-<div class="bg-white rounded-2xl border border-slate-200/60 shadow-sm shadow-slate-200/50 overflow-hidden">
+<div class="bg-white rounded-2xl border border-slate-200/60 shadow-sm shadow-slate-200/50 overflow-hidden mt-6">
     <div class="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
         <div class="flex items-center gap-3">
             <div class="p-2.5 rounded-xl bg-gradient-to-br from-slate-100 to-slate-200">
@@ -421,6 +469,7 @@
             stats: null,
             tokens: null,
             batches: [],
+            monthly: [],
             pollInterval: null,
             init() {
                 this.refresh();
@@ -439,15 +488,18 @@
             },
             async refresh() {
                 try {
-                    const [qRes, tRes, bRes] = await Promise.all([
+                    const [qRes, tRes, bRes, mRes] = await Promise.all([
                         fetch(window._BASE + '/api/queue/status', { credentials: 'same-origin' }),
                         fetch(window._BASE + '/api/tokens/stats', { credentials: 'same-origin' }),
-                        fetch(window._BASE + '/api/batches?limit=5', { credentials: 'same-origin' })
+                        fetch(window._BASE + '/api/batches?limit=5', { credentials: 'same-origin' }),
+                        fetch(window._BASE + '/api/tokens/stats/monthly', { credentials: 'same-origin' })
                     ]);
                     this.stats = await qRes.json();
                     this.tokens = await tRes.json();
                     const batchData = await bRes.json();
                     this.batches = batchData.batches;
+                    const monthlyData = await mRes.json();
+                    this.monthly = monthlyData.months;
                     // Resume polling if work started
                     if (this.stats && (this.stats.is_processing || this.stats.pending > 0) && !this.pollInterval) {
                         this.startSmartPolling();
@@ -464,6 +516,12 @@
                 if (!cost) return '$0.00';
                 if (cost < 0.01) return '$' + cost.toFixed(4);
                 return '$' + cost.toFixed(2);
+            },
+            formatMonth(month) {
+                if (!month) return '';
+                const [year, m] = month.split('-');
+                const date = new Date(Number(year), Number(m) - 1, 1);
+                return date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
             }
         }))
     });

@@ -1195,6 +1195,51 @@ def get_token_stats_route():
         }
     })
 
+@app.route("/api/tokens/stats/monthly", methods=["GET"])
+@limiter.exempt
+@login_required
+def get_token_stats_monthly_route():
+    month_expr = "strftime('%Y-%m', created_at)" if IS_SQLITE else "TO_CHAR(created_at, 'YYYY-MM')"
+
+    rows = query_db(f"""
+        SELECT
+            {month_expr} as month,
+            SUM(input_tokens) as gemini_in,
+            SUM(output_tokens) as gemini_out,
+            SUM(cost) as gemini_cost,
+            SUM(gpt_input_tokens) as gpt_in,
+            SUM(gpt_output_tokens) as gpt_out,
+            SUM(gpt_cost) as gpt_cost,
+            COUNT(*) as total_jobs
+        FROM jobs
+        WHERE status = 'completed'
+        GROUP BY month
+        ORDER BY month DESC
+        LIMIT 12
+    """) or []
+
+    months = []
+    for row in rows:
+        gem_cost = row['gemini_cost'] or 0.0
+        gpt_cost = row['gpt_cost'] or 0.0
+        months.append({
+            "month": row['month'],
+            "gemini": {
+                "input_tokens": row['gemini_in'] or 0,
+                "output_tokens": row['gemini_out'] or 0,
+                "cost": gem_cost
+            },
+            "gpt": {
+                "input_tokens": row['gpt_in'] or 0,
+                "output_tokens": row['gpt_out'] or 0,
+                "cost": gpt_cost
+            },
+            "total_jobs": row['total_jobs'] or 0,
+            "total_cost": gem_cost + gpt_cost
+        })
+
+    return jsonify({"months": months})
+
 # ============================================================
 # MARKUP TOOL — Additive new module.
 # Existing routes, logic, and database code are untouched.
