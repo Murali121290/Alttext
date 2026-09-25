@@ -5,6 +5,7 @@ services:
     ports:
       - "5001:5000"
     volumes:
+      - .:/app
       - ./uploads:/app/uploads
       - ./outputs:/app/outputs
       - ./logs:/app/logs

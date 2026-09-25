@@ -1,0 +1,453 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto space-y-8" x-data="artProofPage()">
+
+    <!-- Page Header -->
+    <div
+        class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gradient-to-r from-amber-500/10 via-orange-500/5 to-transparent p-6 rounded-3xl border border-amber-500/20">
+        <div>
+            <div class="flex items-center gap-2 mb-2">
+                <span
+                    class="px-3 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-800 border border-amber-200 uppercase tracking-wider flex items-center gap-1.5">
+                    <i data-lucide="sparkles" class="h-3.5 w-3.5 text-amber-600"></i>
+                    PDF Proof & Math AI Engine
+                </span>
+            </div>
+            <h1 class="text-3xl font-extrabold text-slate-900 tracking-tight">Art Proof Alt Text Generator</h1>
+            <p class="text-slate-600 mt-1">Extract PDF page header file names, crop figure/equation regions, generate AI
+                Alt Text (LaTeX & Spoken Math), and auto-fill Excel spreadsheets.</p>
+        </div>
+
+        <div class="flex items-center gap-3">
+            <button @click="showLocalPathModal = true"
+                class="px-4 py-2.5 bg-white border border-slate-300 hover:border-amber-400 text-slate-700 font-medium rounded-xl shadow-sm hover:shadow transition-all flex items-center gap-2">
+                <i data-lucide="folder-search" class="h-4 w-4 text-amber-600"></i>
+                Local Folder Path
+            </button>
+            <a href="/files"
+                class="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl shadow-sm transition-all flex items-center gap-2">
+                <i data-lucide="folder-down" class="h-4 w-4"></i>
+                Downloads
+            </a>
+        </div>
+    </div>
+
+    <!-- Quick Stats Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center gap-4">
+            <div class="p-3 bg-amber-50 text-amber-600 rounded-xl">
+                <i data-lucide="file-text" class="h-6 w-6"></i>
+            </div>
+            <div>
+                <p class="text-xs font-medium text-slate-500 uppercase">Processed Proof Pages</p>
+                <p class="text-2xl font-bold text-slate-800" x-text="stats.processedPages || 0"></p>
+            </div>
+        </div>
+
+        <div class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center gap-4">
+            <div class="p-3 bg-blue-50 text-blue-600 rounded-xl">
+                <i data-lucide="sigma" class="h-6 w-6"></i>
+            </div>
+            <div>
+                <p class="text-xs font-medium text-slate-500 uppercase">Equations Parsed</p>
+                <p class="text-2xl font-bold text-slate-800" x-text="stats.eqnCount || 0"></p>
+            </div>
+        </div>
+
+        <div class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center gap-4">
+            <div class="p-3 bg-emerald-50 text-emerald-600 rounded-xl">
+                <i data-lucide="image" class="h-6 w-6"></i>
+            </div>
+            <div>
+                <p class="text-xs font-medium text-slate-500 uppercase">Figures Processed</p>
+                <p class="text-2xl font-bold text-slate-800" x-text="stats.figCount || 0"></p>
+            </div>
+        </div>
+
+        <div class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center gap-4">
+            <div class="p-3 bg-purple-50 text-purple-600 rounded-xl">
+                <i data-lucide="check-circle-2" class="h-6 w-6"></i>
+            </div>
+            <div>
+                <p class="text-xs font-medium text-slate-500 uppercase">Excel Match Rate</p>
+                <p class="text-2xl font-bold text-slate-800" x-text="stats.matchRate || '100%'"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Processing Section -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+        <!-- Left Panel: Upload / Config -->
+        <div class="lg:col-span-1 space-y-6">
+
+            <div class="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-6 space-y-6">
+                <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                    <i data-lucide="upload-cloud" class="h-5 w-5 text-amber-600"></i>
+                    Upload Proof Files
+                </h2>
+
+                <!-- Dropzone -->
+                <div class="border-2 border-dashed border-slate-200 hover:border-amber-400 rounded-2xl p-6 text-center cursor-pointer transition-all bg-slate-50/50 hover:bg-amber-50/20"
+                    @click="$refs.proofFileInput.click()" @dragover.prevent="dragActive = true"
+                    @dragleave.prevent="dragActive = false" @drop.prevent="handleDrop($event)">
+
+                    <input type="file" x-ref="proofFileInput" class="hidden" multiple accept=".pdf,.xlsx"
+                        @change="handleFiles($event.target.files)">
+
+                    <div
+                        class="w-12 h-12 mx-auto mb-3 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center">
+                        <i data-lucide="file-plus" class="h-6 w-6"></i>
+                    </div>
+                    <p class="text-sm font-semibold text-slate-700">Drop PDF Proofs & Excel File</p>
+                    <p class="text-xs text-slate-400 mt-1">Accepts <span
+                            class="text-amber-700 font-medium">*_Art.pdf</span> files & <span
+                            class="text-amber-700 font-medium">.xlsx</span> spreadsheet</p>
+                </div>
+
+                <!-- Selected Files List -->
+                <template x-if="selectedFiles.length > 0">
+                    <div class="space-y-2 max-h-48 overflow-y-auto pr-1">
+                        <p class="text-xs font-semibold text-slate-500 uppercase">Selected Files (<span
+                                x-text="selectedFiles.length"></span>)</p>
+                        <template x-for="(file, idx) in selectedFiles" :key="idx">
+                            <div
+                                class="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl border border-slate-200/60 text-xs">
+                                <div class="flex items-center gap-2 truncate">
+                                    <i data-lucide="file-text" class="h-4 w-4 text-amber-600 shrink-0"></i>
+                                    <span class="font-medium text-slate-700 truncate" x-text="file.name"></span>
+                                </div>
+                                <button @click="removeFile(idx)" class="text-slate-400 hover:text-red-500">
+                                    <i data-lucide="x" class="h-4 w-4"></i>
+                                </button>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+
+                <!-- Model & Prompt Settings -->
+                <div class="space-y-4 pt-4 border-t border-slate-100">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 uppercase mb-1.5">Vision AI
+                            Model</label>
+                        <select x-model="config.model"
+                            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-amber-400 outline-none">
+                            <option value="gemini-2.5-pro">Gemini 2.5 Pro (Highest Accuracy for Math)</option>
+                            <option value="gemini-2.5-flash">Gemini 2.5 Flash (Ultra Fast)</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 uppercase mb-1.5">Alt Text
+                            Style</label>
+                        <select x-model="config.style"
+                            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-amber-400 outline-none">
+                            <option value="standard">Standard (LaTeX for Math + Descriptive Art Text)</option>
+                            <option value="detailed">Detailed (Short + Long Alt Text + Word Count)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Process Button -->
+                <button @click="startProcessing()"
+                    :disabled="isProcessing || (selectedFiles.length === 0 && !localFolderPath)"
+                    class="w-full py-3.5 px-4 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white font-bold rounded-xl shadow-lg shadow-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2">
+                    <template x-if="!isProcessing">
+                        <span class="flex items-center gap-2">
+                            <i data-lucide="play" class="h-5 w-5"></i>
+                            Start Processing Batch
+                        </span>
+                    </template>
+                    <template x-if="isProcessing">
+                        <span class="flex items-center gap-2">
+                            <i data-lucide="loader-2" class="h-5 w-5 animate-spin"></i>
+                            Processing (<span x-text="progressPercent"></span>%)
+                        </span>
+                    </template>
+                </button>
+            </div>
+        </div>
+
+        <!-- Right Panel: Results & Data Table -->
+        <div class="lg:col-span-2 space-y-6">
+
+            <div class="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-6 space-y-6">
+
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                        <i data-lucide="table" class="h-5 w-5 text-amber-600"></i>
+                        Generated Alt Text Results
+                    </h2>
+
+                    <div class="flex items-center gap-3">
+                        <input type="text" x-model="searchQuery" placeholder="Search filename or alt text..."
+                            class="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-amber-400 outline-none w-48">
+                        <button @click="downloadExcel()" :disabled="results.length === 0"
+                            class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl shadow transition-all flex items-center gap-1.5 disabled:opacity-50">
+                            <i data-lucide="download" class="h-4 w-4"></i>
+                            Export Excel
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Progress Bar -->
+                <template x-if="isProcessing">
+                    <div class="p-4 bg-amber-50/50 border border-amber-200 rounded-2xl space-y-2">
+                        <div class="flex justify-between text-xs font-medium text-amber-900">
+                            <span x-text="statusMessage">Processing PDF proof pages...</span>
+                            <span x-text="completedCount + ' / ' + totalCount + ' pages'"></span>
+                        </div>
+                        <div class="w-full bg-amber-200/60 rounded-full h-2.5 overflow-hidden">
+                            <div class="bg-gradient-to-r from-amber-500 to-orange-500 h-2.5 rounded-full transition-all duration-300"
+                                :style="'width: ' + progressPercent + '%'"></div>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- Data Table -->
+                <div class="overflow-x-auto border border-slate-200/80 rounded-2xl">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr
+                                class="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                                <th class="p-3">File Name (PDF Header)</th>
+                                <th class="p-3">Page</th>
+                                <th class="p-3">Preview</th>
+                                <th class="p-3">Generated Alt Text / Math Description</th>
+                                <th class="p-3 text-right">Words</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100 text-xs text-slate-700">
+                            <template x-if="filteredResults.length === 0">
+                                <tr>
+                                    <td colspan="5" class="p-8 text-center text-slate-400">
+                                        <i data-lucide="inbox" class="h-8 w-8 mx-auto mb-2 opacity-50"></i>
+                                        No proof results yet. Upload PDF files or specify a server folder to start.
+                                    </td>
+                                </tr>
+                            </template>
+
+                            <template x-for="(row, idx) in filteredResults" :key="idx">
+                                <tr class="hover:bg-slate-50/80 transition-colors">
+                                    <td class="p-3 font-mono text-slate-900 font-medium truncate max-w-[150px]"
+                                        x-text="row.filename"></td>
+                                    <td class="p-3 text-slate-500" x-text="row.page"></td>
+                                    <td class="p-3">
+                                        <template x-if="row.image_url">
+                                            <img :src="row.image_url"
+                                                class="h-10 w-16 object-contain rounded border border-slate-200 bg-white cursor-pointer hover:scale-105 transition-transform"
+                                                @click="previewImage = row.image_url">
+                                        </template>
+                                        <template x-if="!row.image_url">
+                                            <span class="text-slate-400 italic">No image</span>
+                                        </template>
+                                    </td>
+                                    <td class="p-3 leading-relaxed">
+                                        <div class="font-sans text-slate-800" x-text="row.alt_text"></div>
+                                    </td>
+                                    <td class="p-3 text-right font-mono text-slate-500" x-text="row.word_count || 0">
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Local Path Modal -->
+    <div x-show="showLocalPathModal"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" x-cloak>
+        <div class="bg-white rounded-3xl p-6 max-w-lg w-full space-y-4 shadow-2xl border border-slate-200">
+            <div class="flex justify-between items-center">
+                <h3 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+                    <i data-lucide="folder-search" class="h-5 w-5 text-amber-600"></i>
+                    Process Server Directory
+                </h3>
+                <button @click="showLocalPathModal = false" class="text-slate-400 hover:text-slate-600">
+                    <i data-lucide="x" class="h-5 w-5"></i>
+                </button>
+            </div>
+
+            <p class="text-xs text-slate-500">Specify a directory path available to the server, or drag-and-drop your
+                PDF proof files & <span class="font-mono text-amber-700">Mukherjee_AltText_Spreadsheet.xlsx</span> into
+                the main dropzone.</p>
+            <div class="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800">
+                <strong>💡 Tip for Web App Users:</strong> Dragging & dropping all PDF files and your Excel spreadsheet
+                directly into the <strong>"Drop PDF Proofs & Excel File"</strong> box on the left is the easiest and
+                fastest way to process!
+            </div>
+
+            <div>
+                <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Directory Path</label>
+                <input type="text" x-model="localFolderPath"
+                    class="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono focus:ring-2 focus:ring-amber-400 outline-none"
+                    placeholder="C:\path\to\Art_Proof">
+            </div>
+
+            <div class="flex justify-end gap-3 pt-2">
+                <button @click="showLocalPathModal = false"
+                    class="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-xl">Cancel</button>
+                <button @click="showLocalPathModal = false; startProcessingLocal()"
+                    class="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl shadow">Start
+                    Directory Batch</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Image Preview Modal -->
+    <div x-show="previewImage"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4"
+        @click="previewImage = null" x-cloak>
+        <div class="max-w-4xl w-full bg-white p-4 rounded-3xl shadow-2xl relative" @click.stop>
+            <button @click="previewImage = null"
+                class="absolute top-4 right-4 p-2 bg-slate-100 hover:bg-slate-200 rounded-full text-slate-700">
+                <i data-lucide="x" class="h-5 w-5"></i>
+            </button>
+            <img :src="previewImage" class="max-h-[80vh] mx-auto object-contain rounded-xl">
+        </div>
+    </div>
+
+</div>
+
+<script>
+    function artProofPage() {
+        return {
+            selectedFiles: [],
+            localFolderPath: '',
+            showLocalPathModal: false,
+            previewImage: null,
+            dragActive: false,
+            isProcessing: false,
+            progressPercent: 0,
+            completedCount: 0,
+            totalCount: 0,
+            statusMessage: '',
+            searchQuery: '',
+            config: {
+                model: 'gemini-2.5-pro',
+                style: 'standard'
+            },
+            stats: {
+                processedPages: 0,
+                eqnCount: 0,
+                figCount: 0,
+                matchRate: '100%'
+            },
+            results: [],
+
+            get filteredResults() {
+                if (!this.searchQuery) return this.results;
+                const q = this.searchQuery.toLowerCase();
+                return this.results.filter(r =>
+                    (r.filename && r.filename.toLowerCase().includes(q)) ||
+                    (r.alt_text && r.alt_text.toLowerCase().includes(q))
+                );
+            },
+
+            handleFiles(files) {
+                for (let i = 0; i < files.length; i++) {
+                    this.selectedFiles.push(files[i]);
+                }
+            },
+
+            handleDrop(e) {
+                this.dragActive = false;
+                this.handleFiles(e.dataTransfer.files);
+            },
+
+            removeFile(idx) {
+                this.selectedFiles.splice(idx, 1);
+            },
+
+            startProcessing() {
+                if (this.selectedFiles.length > 0) {
+                    this.processUploadedFiles();
+                } else if (this.localFolderPath) {
+                    this.startProcessingLocal();
+                } else {
+                    alert('Please drag & drop PDF proof files into the upload box or select a server folder path.');
+                }
+            },
+
+            processUploadedFiles() {
+                const formData = new FormData();
+                this.selectedFiles.forEach(f => formData.append('files', f));
+                formData.append('model', this.config.model);
+                formData.append('style', this.config.style);
+
+                this.isProcessing = true;
+                this.progressPercent = 15;
+                this.statusMessage = 'Uploading and processing proof files with Gemini 2.5 Pro...';
+
+                fetch('/api/art-proof/upload', {
+                    method: 'POST',
+                    body: formData
+                })
+                    .then(res => res.json())
+                    .then(data => {
+                        this.isProcessing = false;
+                        if (data.error) {
+                            alert('Error: ' + data.error);
+                        } else {
+                            this.results = data.results || [];
+                            this.progressPercent = 100;
+                            this.updateStats();
+                        }
+                    })
+                    .catch(err => {
+                        this.isProcessing = false;
+                        alert('Request failed: ' + err);
+                    });
+            },
+
+            startProcessingLocal() {
+                if (!this.localFolderPath) return;
+
+                this.isProcessing = true;
+                this.statusMessage = 'Initializing local directory batch...';
+                this.progressPercent = 5;
+
+                fetch('/api/art-proof/process-local', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        folder_path: this.localFolderPath,
+                        model: this.config.model,
+                        style: this.config.style
+                    })
+                })
+                    .then(res => res.json())
+                    .then(data => {
+                        this.isProcessing = false;
+                        if (data.error) {
+                            alert('Error: ' + data.error);
+                        } else {
+                            this.results = data.results || [];
+                            this.progressPercent = 100;
+                            this.updateStats();
+                        }
+                    })
+                    .catch(err => {
+                        this.isProcessing = false;
+                        alert('Request failed: ' + err);
+                    });
+            },
+
+            updateStats() {
+                this.stats.processedPages = this.results.length;
+                this.stats.eqnCount = this.results.filter(r => r.filename && r.filename.includes('Eqn')).length;
+                this.stats.figCount = this.results.filter(r => r.filename && r.filename.includes('Figure')).length;
+            },
+
+            downloadExcel() {
+                window.location.href = '/api/art-proof/download-excel';
+            }
+        }
+    }
+</script>
+{% endblock %}

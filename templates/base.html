@@ -118,6 +118,13 @@
                     <span>Process Figures</span>
                 </a>
 
+                <a href="{{ url_for('art_proof_page') }}"
+                    class="flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 {{ 'bg-gradient-to-r from-amber-500/20 to-orange-500/10 text-amber-600 shadow-lg shadow-amber-500/5' if active_page == 'art_proof' else 'text-slate-700 hover:bg-slate-100 hover:text-slate-900' }}">
+                    <i data-lucide="file-image"
+                        class="h-5 w-5 {{ 'text-amber-600' if active_page == 'art_proof' else 'text-slate-600' }}"></i>
+                    <span>Art Proof</span>
+                </a>
+
                 <a href="{{ url_for('files_page') }}"
                     class="flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 {{ 'bg-gradient-to-r from-amber-500/20 to-orange-500/10 text-amber-600 shadow-lg shadow-amber-500/5' if active_page == 'files' else 'text-slate-700 hover:bg-slate-100 hover:text-slate-900' }}">
                     <i data-lucide="folder"

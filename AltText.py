@@ -734,6 +734,73 @@ def index():
 def upload_page():
     return render_template('upload.html', active_page='upload')
 
+@app.route("/art-proof", methods=["GET"])
+@login_required
+def art_proof_page():
+    return render_template('art_proof.html', active_page='art_proof')
+
+@app.route("/api/art-proof/process-local", methods=["POST"])
+@login_required
+def api_art_proof_process_local():
+    data = request.json or {}
+    folder_path = data.get("folder_path")
+    model_name = data.get("model", "gemini-2.5-pro")
+    if not folder_path or not os.path.exists(folder_path):
+        return jsonify({"error": f"Folder path not found: {folder_path}"}), 400
+    try:
+        from art_proof_processor import process_proof_directory
+        results, excel_path = process_proof_directory(folder_path, model_name=model_name)
+        clean_results = []
+        for r in results:
+            clean_results.append({
+                "filename": r["filename"],
+                "page": r["page"],
+                "pdf_name": r["pdf_name"],
+                "alt_text": r["alt_text"],
+                "word_count": r["word_count"]
+            })
+        return jsonify({"status": "success", "results": clean_results, "excel_output": excel_path})
+    except Exception as e:
+        logger.error(f"Error in art proof process local: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/art-proof/upload", methods=["POST"])
+@login_required
+def api_art_proof_upload():
+    uploaded_files = request.files.getlist("files")
+    model_name = request.form.get("model", "gemini-2.5-pro")
+    if not uploaded_files:
+        return jsonify({"error": "No files uploaded"}), 400
+    try:
+        temp_dir = os.path.join(UPLOAD_FOLDER, f"art_proof_{int(time.time())}")
+        os.makedirs(temp_dir, exist_ok=True)
+        for f in uploaded_files:
+            if f.filename:
+                f.save(os.path.join(temp_dir, sanitize_filename(f.filename)))
+        from art_proof_processor import process_proof_directory
+        results, excel_path = process_proof_directory(temp_dir, model_name=model_name)
+        clean_results = []
+        for r in results:
+            clean_results.append({
+                "filename": r["filename"],
+                "page": r["page"],
+                "pdf_name": r["pdf_name"],
+                "alt_text": r["alt_text"],
+                "word_count": r["word_count"]
+            })
+        return jsonify({"status": "success", "results": clean_results, "excel_output": excel_path})
+    except Exception as e:
+        logger.error(f"Error in art proof upload process: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/art-proof/download-excel", methods=["GET"])
+@login_required
+def api_art_proof_download_excel():
+    target_file = os.path.join(OUTPUT_FOLDER, "Mukherjee_AltText_Completed.xlsx")
+    if os.path.exists(target_file):
+        return send_file(os.path.realpath(target_file), as_attachment=True)
+    return jsonify({"error": "Completed Excel file not found. Run processing first."}), 404
+
 @app.route("/batches", methods=["GET"])
 @login_required
 def batches_page():

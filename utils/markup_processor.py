@@ -99,9 +99,10 @@ def crop_region_to_png(pdf_path: str, page_num: int,
     Coordinates are fractions of page width/height (0.0 – 1.0).
     Rendered at 2x scale for quality.
     """
-    for name, val in [("x0_pct", x0_pct), ("y0_pct", y0_pct), ("x1_pct", x1_pct), ("y1_pct", y1_pct)]:
-        if not (0.0 <= val <= 1.0):
-            raise ValueError(f"Coordinate {name}={val} is out of range [0.0, 1.0]")
+    x0_pct = min(max(x0_pct, 0.0), 1.0)
+    y0_pct = min(max(y0_pct, 0.0), 1.0)
+    x1_pct = min(max(x1_pct, 0.0), 1.0)
+    y1_pct = min(max(y1_pct, 0.0), 1.0)
     if x0_pct >= x1_pct or y0_pct >= y1_pct:
         raise ValueError(f"Invalid crop rect: ({x0_pct},{y0_pct}) → ({x1_pct},{y1_pct})")
 
