@@ -740,6 +740,25 @@ def upload_page():
 def art_proof_page():
     return render_template('art_proof.html', active_page='art_proof')
 
+def _run_art_proof_async(batch_id, target_dir, model_name):
+    conn = get_db_connection()
+    try:
+        from art_proof_processor import process_proof_directory
+        results, excel_path = process_proof_directory(target_dir, model_name=model_name)
+        out_fname = os.path.basename(excel_path)
+        query_db("UPDATE jobs SET status = 'completed', output_file = %s, alttext_image_count = %s, alttext_count = %s WHERE batch_id = %s",
+                 (out_fname, len(results), len(results), batch_id), commit=True, conn=conn)
+        query_db("UPDATE batches SET status = 'completed' WHERE id = %s", (batch_id,), commit=True, conn=conn)
+        logger.info(f"Art Proof Batch {batch_id} completed successfully with {len(results)} items.")
+    except Exception as e:
+        logger.error(f"Art Proof Batch {batch_id} failed: {e}", exc_info=True)
+        query_db("UPDATE jobs SET status = 'failed', error_msg = %s WHERE batch_id = %s",
+                 (str(e), batch_id), commit=True, conn=conn)
+        query_db("UPDATE batches SET status = 'failed' WHERE id = %s", (batch_id,), commit=True, conn=conn)
+    finally:
+        if conn:
+            conn.close()
+
 @app.route("/api/art-proof/process-local", methods=["POST"])
 @login_required
 def api_art_proof_process_local():
@@ -759,24 +778,14 @@ def api_art_proof_process_local():
             query_db("INSERT INTO jobs (batch_id, filename, status) VALUES (%s, %s, %s)",
                      (batch_id, pdf_fname, 'processing'), commit=True)
 
-        from art_proof_processor import process_proof_directory
-        results, excel_path = process_proof_directory(folder_path, model_name=model_name)
+        t = threading.Thread(target=_run_art_proof_async, args=(batch_id, folder_path, model_name), daemon=True)
+        t.start()
 
-        out_fname = os.path.basename(excel_path)
-        query_db("UPDATE jobs SET status = 'completed', output_file = %s, alttext_image_count = %s, alttext_count = %s WHERE batch_id = %s",
-                 (out_fname, len(results), len(results), batch_id), commit=True)
-        query_db("UPDATE batches SET status = 'completed' WHERE id = %s", (batch_id,), commit=True)
-
-        clean_results = []
-        for r in results:
-            clean_results.append({
-                "filename": r["filename"],
-                "page": r["page"],
-                "pdf_name": r["pdf_name"],
-                "alt_text": r["alt_text"],
-                "word_count": r["word_count"]
-            })
-        return jsonify({"status": "success", "batch_id": batch_id, "results": clean_results, "excel_output": excel_path})
+        return jsonify({
+            "status": "processing",
+            "batch_id": batch_id,
+            "message": f"Art Proof batch #{batch_id} started processing in background."
+        })
     except Exception as e:
         logger.error(f"Error in art proof process local: {e}")
         return jsonify({"error": str(e)}), 500
@@ -803,24 +812,14 @@ def api_art_proof_upload():
                     query_db("INSERT INTO jobs (batch_id, filename, status) VALUES (%s, %s, %s)",
                              (batch_id, safe_fname, 'processing'), commit=True)
 
-        from art_proof_processor import process_proof_directory
-        results, excel_path = process_proof_directory(temp_dir, model_name=model_name)
+        t = threading.Thread(target=_run_art_proof_async, args=(batch_id, temp_dir, model_name), daemon=True)
+        t.start()
 
-        out_fname = os.path.basename(excel_path)
-        query_db("UPDATE jobs SET status = 'completed', output_file = %s, alttext_image_count = %s, alttext_count = %s WHERE batch_id = %s",
-                 (out_fname, len(results), len(results), batch_id), commit=True)
-        query_db("UPDATE batches SET status = 'completed' WHERE id = %s", (batch_id,), commit=True)
-
-        clean_results = []
-        for r in results:
-            clean_results.append({
-                "filename": r["filename"],
-                "page": r["page"],
-                "pdf_name": r["pdf_name"],
-                "alt_text": r["alt_text"],
-                "word_count": r["word_count"]
-            })
-        return jsonify({"status": "success", "batch_id": batch_id, "results": clean_results, "excel_output": excel_path})
+        return jsonify({
+            "status": "processing",
+            "batch_id": batch_id,
+            "message": f"Art Proof batch #{batch_id} started processing in background."
+        })
     except Exception as e:
         logger.error(f"Error in art proof upload process: {e}")
         return jsonify({"error": str(e)}), 500

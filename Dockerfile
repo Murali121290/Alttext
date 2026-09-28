@@ -25,5 +25,5 @@ EXPOSE 5000
 ENV FLASK_APP=AltText.py
 ENV PYTHONUNBUFFERED=1
 
-# Run with Gunicorn (threads & 1200s timeout for batch AI processing)
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--threads", "4", "--timeout", "1200", "AltText:app"]
+# Run with Gunicorn (threads & 3600s / 1 hour timeout for large batch processing)
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--threads", "4", "--timeout", "3600", "AltText:app"]
