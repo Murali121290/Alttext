@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import glob
 import re
-import fitz  # PyMuPDF
+import pymupdf as fitz  # PyMuPDF
 import io
 import json
 import openpyxl

@@ -130,6 +130,23 @@
                 </template>
             </button>
 
+            <!-- Art Proof Batch Button -->
+            <button @click="submitArtProofBatch" :disabled="files.length === 0 || isUploading"
+                class="w-full py-3 px-6 rounded-2xl font-medium text-amber-800 bg-amber-50 border border-amber-300 transition-all duration-300 flex items-center justify-center gap-2 hover:bg-amber-100 hover:border-amber-400 disabled:opacity-50 disabled:cursor-not-allowed">
+                <template x-if="isArtProofUploading">
+                    <span class="flex items-center gap-2">
+                        <i data-lucide="loader-2" class="h-4 w-4 animate-spin text-amber-600"></i>
+                        Processing Art Proof Batch...
+                    </span>
+                </template>
+                <template x-if="!isArtProofUploading">
+                    <span class="flex items-center gap-2">
+                        <i data-lucide="file-image" class="h-4 w-4 text-amber-600"></i>
+                        Process as Art Proof Batch (PDF Proofs & Math AI)
+                    </span>
+                </template>
+            </button>
+
             <div x-show="uploadError" class="p-4 rounded-xl bg-red-50 border border-red-200 flex items-start gap-3"
                 x-cloak>
                 <div class="p-1 rounded-full bg-red-100">
@@ -213,6 +230,7 @@
             runGpt: false,
             isUploading: false,
             isExtracting: false,
+            isArtProofUploading: false,
             uploadError: null,
             uploadSuccess: false,
             successMessage: '',
@@ -338,6 +356,47 @@
                     this.uploadError = err.message;
                 } finally {
                     this.isExtracting = false;
+                }
+            },
+
+            async submitArtProofBatch() {
+                if (this.files.length === 0) return;
+
+                this.isArtProofUploading = true;
+                this.uploadError = null;
+
+                const formData = new FormData();
+                this.files.forEach(file => {
+                    formData.append('files', file);
+                });
+                formData.append('model', 'gemini-2.5-pro');
+
+                try {
+                    const res = await fetch(window._BASE + '/api/art-proof/upload', {
+                        method: 'POST',
+                        body: formData,
+                        credentials: 'same-origin'
+                    });
+
+                    if (!res.ok) {
+                        const err = await res.json();
+                        throw new Error(err.error || 'Art proof processing failed');
+                    }
+                    const data = await res.json();
+                    this.uploadSuccess = true;
+                    this.successMessage = 'Art proof batch created. Redirecting to batch view...';
+                    setTimeout(() => {
+                        if (data.batch_id) {
+                            window.location.href = '/batch/' + data.batch_id;
+                        } else {
+                            window.location.href = '/art-proof';
+                        }
+                    }, 1000);
+
+                } catch (err) {
+                    this.uploadError = err.message;
+                } finally {
+                    this.isArtProofUploading = false;
                 }
             }
         }))

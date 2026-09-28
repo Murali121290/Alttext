@@ -1,5 +1,6 @@
 import os
-import fitz  # PyMuPDF
+import glob
+import pymupdf as fitz  # PyMuPDF
 import io
 import sqlite3
 import psycopg2
@@ -748,8 +749,24 @@ def api_art_proof_process_local():
     if not folder_path or not os.path.exists(folder_path):
         return jsonify({"error": f"Folder path not found: {folder_path}"}), 400
     try:
+        batch_name = f"ArtProof_{os.path.basename(os.path.normpath(folder_path))}"
+        batch_id = query_db("INSERT INTO batches (name, status) VALUES (%s, %s) RETURNING id",
+                           (batch_name, 'processing'), commit=True, return_id=True)
+
+        pdf_files = sorted(glob.glob(os.path.join(folder_path, "*_Art.pdf"))) or sorted(glob.glob(os.path.join(folder_path, "*.pdf")))
+        for pdf_p in pdf_files:
+            pdf_fname = os.path.basename(pdf_p)
+            query_db("INSERT INTO jobs (batch_id, filename, status) VALUES (%s, %s, %s)",
+                     (batch_id, pdf_fname, 'processing'), commit=True)
+
         from art_proof_processor import process_proof_directory
         results, excel_path = process_proof_directory(folder_path, model_name=model_name)
+
+        out_fname = os.path.basename(excel_path)
+        query_db("UPDATE jobs SET status = 'completed', output_file = %s, alttext_image_count = %s, alttext_count = %s WHERE batch_id = %s",
+                 (out_fname, len(results), len(results), batch_id), commit=True)
+        query_db("UPDATE batches SET status = 'completed' WHERE id = %s", (batch_id,), commit=True)
+
         clean_results = []
         for r in results:
             clean_results.append({
@@ -759,7 +776,7 @@ def api_art_proof_process_local():
                 "alt_text": r["alt_text"],
                 "word_count": r["word_count"]
             })
-        return jsonify({"status": "success", "results": clean_results, "excel_output": excel_path})
+        return jsonify({"status": "success", "batch_id": batch_id, "results": clean_results, "excel_output": excel_path})
     except Exception as e:
         logger.error(f"Error in art proof process local: {e}")
         return jsonify({"error": str(e)}), 500
@@ -772,13 +789,28 @@ def api_art_proof_upload():
     if not uploaded_files:
         return jsonify({"error": "No files uploaded"}), 400
     try:
-        temp_dir = os.path.join(UPLOAD_FOLDER, f"art_proof_{int(time.time())}")
+        batch_name = f"ArtProof_Upload_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        batch_id = query_db("INSERT INTO batches (name, status) VALUES (%s, %s) RETURNING id",
+                           (batch_name, 'processing'), commit=True, return_id=True)
+
+        temp_dir = os.path.join(UPLOAD_FOLDER, f"art_proof_{batch_id}")
         os.makedirs(temp_dir, exist_ok=True)
         for f in uploaded_files:
             if f.filename:
-                f.save(os.path.join(temp_dir, sanitize_filename(f.filename)))
+                safe_fname = sanitize_filename(f.filename)
+                f.save(os.path.join(temp_dir, safe_fname))
+                if safe_fname.lower().endswith('.pdf'):
+                    query_db("INSERT INTO jobs (batch_id, filename, status) VALUES (%s, %s, %s)",
+                             (batch_id, safe_fname, 'processing'), commit=True)
+
         from art_proof_processor import process_proof_directory
         results, excel_path = process_proof_directory(temp_dir, model_name=model_name)
+
+        out_fname = os.path.basename(excel_path)
+        query_db("UPDATE jobs SET status = 'completed', output_file = %s, alttext_image_count = %s, alttext_count = %s WHERE batch_id = %s",
+                 (out_fname, len(results), len(results), batch_id), commit=True)
+        query_db("UPDATE batches SET status = 'completed' WHERE id = %s", (batch_id,), commit=True)
+
         clean_results = []
         for r in results:
             clean_results.append({
@@ -788,7 +820,7 @@ def api_art_proof_upload():
                 "alt_text": r["alt_text"],
                 "word_count": r["word_count"]
             })
-        return jsonify({"status": "success", "results": clean_results, "excel_output": excel_path})
+        return jsonify({"status": "success", "batch_id": batch_id, "results": clean_results, "excel_output": excel_path})
     except Exception as e:
         logger.error(f"Error in art proof upload process: {e}")
         return jsonify({"error": str(e)}), 500

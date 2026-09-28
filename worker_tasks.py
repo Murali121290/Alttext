@@ -1,6 +1,6 @@
 import os
 import shutil
-import fitz  # PyMuPDF
+import pymupdf as fitz  # PyMuPDF
 import io
 import sqlite3
 import psycopg2
