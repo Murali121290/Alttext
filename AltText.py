@@ -15,7 +15,7 @@ from openpyxl import Workbook
 import google.genai as genai
 import json
 import worker_tasks
-from utils.prompt_assets import SYSTEM_PROMPT
+from utils.prompt_assets import SYSTEM_PROMPT, normalize_spelling
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from functools import wraps
@@ -240,6 +240,8 @@ def init_db():
                     cur.execute("ALTER TABLE jobs ADD COLUMN gpt_image_count INTEGER DEFAULT 0")
                 if 'gpt_alttext_count' not in j_cols:
                     cur.execute("ALTER TABLE jobs ADD COLUMN gpt_alttext_count INTEGER DEFAULT 0")
+                if 'spelling' not in j_cols:
+                    cur.execute("ALTER TABLE jobs ADD COLUMN spelling TEXT DEFAULT 'US'")
 
             else:
                 # PostgreSQL supports IF NOT EXISTS
@@ -253,6 +255,7 @@ def init_db():
                 cur.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS alttext_count INTEGER DEFAULT 0")
                 cur.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS gpt_image_count INTEGER DEFAULT 0")
                 cur.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS gpt_alttext_count INTEGER DEFAULT 0")
+                cur.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS spelling TEXT DEFAULT 'US'")
             conn.commit()
         except Exception as e:
             logger.warning(f"Column migration warning (may be normal if columns exist): {e}")
@@ -933,6 +936,7 @@ def create_batch_route():
     batch_name = request.form.get("batch_name") or f"Batch {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
     run_gemini = request.form.get("run_gemini", "true").lower() == "true"
     run_gpt = request.form.get("run_gpt", "false").lower() == "true"
+    spelling = normalize_spelling(request.form.get("spelling"))
 
     if not files:
         return jsonify({"error": "No files selected"}), 400
@@ -995,14 +999,14 @@ def create_batch_route():
     jobs_to_process = []
 
     for filename, filepath in valid_files:
-        job_id = query_db("INSERT INTO jobs (batch_id, filename, status) VALUES (%s, %s, %s) RETURNING id",
-                         (batch_id, filename, 'pending'), commit=True, return_id=True)
+        job_id = query_db("INSERT INTO jobs (batch_id, filename, status, spelling) VALUES (%s, %s, %s, %s) RETURNING id",
+                         (batch_id, filename, 'pending', spelling), commit=True, return_id=True)
         jobs_to_process.append((job_id, filepath))
-            
+
     # Delegate background processing to a local thread
     thread = threading.Thread(
         target=worker_tasks.run_batch_processing,
-        args=(batch_id, jobs_to_process, run_gemini, run_gpt)
+        args=(batch_id, jobs_to_process, run_gemini, run_gpt, spelling)
     )
     thread.daemon = True
     thread.start()
@@ -1377,6 +1381,9 @@ def markup_upload():
     # Store original filename for display / export
     with open(os.path.join(session_dir, "source_name.txt"), "w", encoding="utf-8") as _fn:
         _fn.write(raw_name)
+    # Store the chosen spelling variant (US/UK) for all generation in this session
+    with open(os.path.join(session_dir, "spelling.txt"), "w", encoding="utf-8") as _sp:
+        _sp.write(normalize_spelling(request.form.get("spelling")))
 
     page_count = 1
     pages_meta = []
@@ -1428,8 +1435,26 @@ def markup_upload():
         "page_count": page_count,
         "pages": pages_meta,
         "pre_regions": pre_regions,
-        "file_ext": file_ext
+        "file_ext": file_ext,
+        "spelling": normalize_spelling(request.form.get("spelling"))
     })
+
+
+def _markup_session_spelling(session_id):
+    """Read the spelling variant (US/UK) chosen when the markup PDF was uploaded."""
+    path = os.path.join(MARKUP_FOLDER, session_id, "spelling.txt")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return normalize_spelling(f.read())
+    except OSError:
+        return normalize_spelling(None)
+
+
+def _job_spelling(job):
+    try:
+        return normalize_spelling(job["spelling"])
+    except (KeyError, IndexError, TypeError):
+        return normalize_spelling(None)
 
 
 @app.route("/api/markup/doc/<session_id>")
@@ -1475,7 +1500,7 @@ def markup_generate():
 
     try:
         from utils.markup_processor import process_markup_regions, write_markup_excel
-        results = process_markup_regions(real_pdf, regions)
+        results = process_markup_regions(real_pdf, regions, _markup_session_spelling(session_id))
 
         name_file = os.path.join(MARKUP_FOLDER, session_id, "source_name.txt")
         if os.path.exists(name_file):
@@ -1532,7 +1557,7 @@ def markup_generate_region():
 
     try:
         from utils.markup_processor import process_markup_regions
-        results = process_markup_regions(pdf_path, [region])
+        results = process_markup_regions(pdf_path, [region], _markup_session_spelling(session_id))
         return jsonify({"result": results[0]})
     except Exception as e:
         logger.error(f"Markup generate_region failed: {e}", exc_info=True)
@@ -1607,7 +1632,8 @@ def markup_refine_region():
             float(region["x0_pct"]), float(region["y0_pct"]),
             float(region["x1_pct"]), float(region["y1_pct"]),
         )
-        result = refine_markup_region(png_bytes, previous_short, previous_long, prompt)
+        result = refine_markup_region(png_bytes, previous_short, previous_long, prompt,
+                                      _markup_session_spelling(session_id))
         return jsonify(result)
     except Exception as e:
         logger.error(f"Markup refine_region failed: {e}", exc_info=True)
@@ -1765,7 +1791,7 @@ def job_generate_region(job_id):
 
     try:
         from utils.markup_processor import process_markup_regions
-        results = process_markup_regions(pdf_path, [region])
+        results = process_markup_regions(pdf_path, [region], _job_spelling(job))
         return jsonify({"result": results[0]})
     except Exception as e:
         logger.error(f"Job {job_id} generate_region failed: {e}", exc_info=True)
@@ -1802,7 +1828,8 @@ def job_refine_region(job_id):
             float(region["x0_pct"]), float(region["y0_pct"]),
             float(region["x1_pct"]), float(region["y1_pct"]),
         )
-        result = refine_markup_region(png_bytes, previous_short, previous_long, prompt)
+        result = refine_markup_region(png_bytes, previous_short, previous_long, prompt,
+                                      _job_spelling(job))
         return jsonify(result)
     except Exception as e:
         logger.error(f"Job {job_id} refine_region failed: {e}", exc_info=True)

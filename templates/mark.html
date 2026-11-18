@@ -19,9 +19,29 @@
     <div x-show="!sessionId" class="flex-1 flex flex-col items-center justify-center p-6 bg-slate-50 w-full h-full">
         <div class="max-w-lg w-full bg-white rounded-2xl shadow-xl p-10 text-center border border-slate-100 transition-all duration-300 hover:shadow-2xl">
             <h2 class="text-3xl font-bold text-slate-800 mb-3 tracking-tight">Upload Document</h2>
-            <p class="text-slate-500 mb-8 text-sm">Select a PDF document to begin the alt-text markup process.</p>
-            
-            <label class="cursor-pointer group block w-full">
+            <p class="text-slate-500 mb-6 text-sm">Select a PDF document to begin the alt-text markup process.</p>
+
+            <!-- Spelling choice (required before upload) -->
+            <div class="mb-6 text-left">
+                <label class="block text-sm font-semibold text-slate-700 mb-2">
+                    Alt Text Spelling <span class="text-red-500">*</span>
+                </label>
+                <div class="grid grid-cols-2 gap-3">
+                    <label class="flex items-center gap-2 px-3 py-2.5 rounded-xl border cursor-pointer transition-all"
+                        :class="spelling === 'US' ? 'border-emerald-400 bg-emerald-50' : 'border-slate-200 hover:border-emerald-300'">
+                        <input type="radio" name="spelling" value="US" x-model="spelling" class="text-emerald-600 focus:ring-emerald-500/20">
+                        <span class="text-sm text-slate-700"><strong>US</strong> <span class="text-slate-400">(color)</span></span>
+                    </label>
+                    <label class="flex items-center gap-2 px-3 py-2.5 rounded-xl border cursor-pointer transition-all"
+                        :class="spelling === 'UK' ? 'border-emerald-400 bg-emerald-50' : 'border-slate-200 hover:border-emerald-300'">
+                        <input type="radio" name="spelling" value="UK" x-model="spelling" class="text-emerald-600 focus:ring-emerald-500/20">
+                        <span class="text-sm text-slate-700"><strong>UK</strong> <span class="text-slate-400">(colour)</span></span>
+                    </label>
+                </div>
+                <p x-show="!spelling" class="text-xs text-amber-600 mt-2">Choose US or UK spelling to enable upload.</p>
+            </div>
+
+            <label class="group block w-full" :class="spelling ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'">
                 <div class="h-56 w-full border-2 border-dashed border-emerald-300 rounded-xl flex flex-col items-center justify-center bg-emerald-50/50 group-hover:bg-emerald-100/50 group-hover:border-emerald-400 transition-all duration-200 p-6">
                     <div class="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mb-4 group-hover:-translate-y-1 transition-transform duration-200 shadow-sm">
                         <i data-lucide="upload-cloud" class="h-8 w-8"></i>
@@ -29,7 +49,7 @@
                     <span class="font-semibold text-emerald-700 text-lg">Click to browse</span>
                     <span class="text-xs text-emerald-600/70 mt-1 font-medium">PDF files only</span>
                 </div>
-                <input type="file" class="hidden" accept=".pdf" @change="uploadDocument($event)" :disabled="isUploading">
+                <input type="file" class="hidden" accept=".pdf" @change="uploadDocument($event)" :disabled="isUploading || !spelling">
             </label>
             <div x-show="isUploading" class="mt-8 flex flex-col items-center gap-3">
                 <div class="p-3 bg-emerald-50 rounded-full">
@@ -217,6 +237,7 @@ function markupApp() {
         sessionId: null,
         filename: null,
         fileExt: 'pdf',             // tracked so we can branch on non-PDF uploads
+        spelling: '',               // 'US' or 'UK' — required before upload
         isUploading: false,
         isExporting: false,
         isProcessing: false,
@@ -348,8 +369,16 @@ function markupApp() {
             this.filename = file.name;
             this.fileExt = (file.name.includes('.') ? file.name.split('.').pop() : 'pdf').toLowerCase();
 
+            if (!this.spelling) {
+                alert('Please choose the alt text spelling (US or UK) before uploading.');
+                e.target.value = '';
+                this.isUploading = false;
+                return;
+            }
+
             const fd = new FormData();
             fd.append('file', file);
+            fd.append('spelling', this.spelling);
 
             try {
                 const res = await fetch(window._BASE + '/api/markup/upload', {

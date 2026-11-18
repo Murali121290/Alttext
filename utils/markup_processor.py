@@ -85,10 +85,16 @@ MARKUP_SYSTEM_PROMPT = (
     "- For tables: describe structure, column headers, and key data values\n"
     "- For text blocks: transcribe verbatim if short; summarize clearly if long\n"
     "- For figures/images: describe content and purpose, not aesthetics\n"
-    "- Use present tense, active voice, American English spelling\n"
+    "- Use present tense, active voice, and ONLY the spelling variant given below\n"
     "- Every sentence must contain a verb\n"
     "- Hard cap: long_alt must not exceed 300 words\n"
 )
+
+
+def get_markup_system_prompt(spelling: str = "US") -> str:
+    """Markup prompt with the chosen spelling variant (US or UK) appended."""
+    from utils.prompt_assets import spelling_instruction
+    return f"{MARKUP_SYSTEM_PROMPT}\n{spelling_instruction(spelling)}\n"
 
 
 def crop_region_to_png(pdf_path: str, page_num: int,
@@ -132,18 +138,21 @@ MARKUP_REFINE_PROMPT_TMPL = (
     "Return ONLY valid JSON — no markdown fences, no explanation:\n"
     '{{"short_alt": "...", "long_alt": "..."}}\n\n'
     "Apply all original WCAG rules: no leading articles (A/An/The), no banned phrases "
-    "('image of', 'shows', 'depicts'), present tense, active voice, American English, "
-    "hard cap of 300 words for long_alt."
+    "('image of', 'shows', 'depicts'), present tense, active voice, "
+    "hard cap of 300 words for long_alt.\n\n"
+    "{spelling_block}"
 )
 
 
 def refine_markup_region(png_bytes: bytes, previous_short: str,
-                          previous_long: str, prompt: str) -> dict:
+                          previous_long: str, prompt: str,
+                          spelling: str = "US") -> dict:
     """
     Refine existing alt text for a region based on a user instruction.
     Re-sends the crop image so Gemini can reference the visual while revising.
     Returns dict with keys: short_alt, long_alt.
     """
+    from utils.prompt_assets import spelling_instruction
     client = _get_client()
 
     image = Image.open(io.BytesIO(png_bytes))
@@ -156,6 +165,7 @@ def refine_markup_region(png_bytes: bytes, previous_short: str,
         short_alt=previous_short,
         long_alt=previous_long,
         prompt=prompt,
+        spelling_block=spelling_instruction(spelling),
     )
 
     MAX_RETRIES = 5
@@ -203,7 +213,7 @@ def refine_markup_region(png_bytes: bytes, previous_short: str,
         return {"short_alt": previous_short, "long_alt": raw}
 
 
-def call_gemini_for_region(png_bytes: bytes) -> dict:
+def call_gemini_for_region(png_bytes: bytes, spelling: str = "US") -> dict:
     """
     Send a cropped region PNG to Gemini 2.5 Pro and return a parsed dict
     with keys: content_type, short_alt, long_alt.
@@ -224,7 +234,7 @@ def call_gemini_for_region(png_bytes: bytes) -> dict:
         try:
             response = client.models.generate_content(
                 model=MODEL_NAME,
-                contents=[MARKUP_SYSTEM_PROMPT, image],
+                contents=[get_markup_system_prompt(spelling), image],
                 config={"temperature": 0.1, "top_p": 0.9},
             )
             break
@@ -268,7 +278,7 @@ def call_gemini_for_region(png_bytes: bytes) -> dict:
         }
 
 
-def process_markup_regions(pdf_path: str, regions: list) -> list:
+def process_markup_regions(pdf_path: str, regions: list, spelling: str = "US") -> list:
     """
     Process a list of user-drawn regions through Gemini.
 
@@ -290,7 +300,7 @@ def process_markup_regions(pdf_path: str, regions: list) -> list:
                 float(region["x1_pct"]),
                 float(region["y1_pct"]),
             )
-            gemini_result = call_gemini_for_region(png_bytes)
+            gemini_result = call_gemini_for_region(png_bytes, spelling)
             results.append({
                 **region,
                 "content_type": gemini_result.get("content_type", "unknown"),

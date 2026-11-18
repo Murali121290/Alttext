@@ -73,7 +73,7 @@
                     "- For maps, describe regions and key labels.",
                     "- Maintain natural sentence flow optimized for screen readers.",
                     "- Use present tense and active voice.",
-                    "- Use American English spelling.",
+                    "- Use ONLY the English spelling variant (US or UK) given in the SPELLING VARIANT instruction. Never mix variants.",
                     "- Avoid subjective or decorative commentary."
                 ]
             },
@@ -90,7 +90,7 @@
                     "Within sentences, write grammatically complete English: include required articles (a, an, the) before singular countable nouns mid-sentence, and include required prepositions (in, on, of, with, at, for, by) where needed. Do not omit articles or prepositions inside sentences.",
                     "PREPOSITION RULE — 'of' is required after these words: 'photograph', 'close-up', 'macro photograph', 'profile', 'view', 'series'. CORRECT: 'Macro photograph of a single egg.' WRONG: 'Macro photograph a single egg.'",
                     "VERB RULE — Every sentence must contain a verb. CORRECT: 'This image shows the egg-laying stage.' WRONG: 'This image the egg-laying stage.' For panel labels (Panel A, Panel B, etc.) always include a verb: 'Panel A shows a 2-mm caterpillar.' NOT 'Panel A a 2-mm caterpillar.'",
-                    "Spell-check all words. Do not produce misspelled words.",
+                    "Spell-check all words. Do not produce misspelled words (see Section 7 proofreading pass).",
                     "Do not invent content."
                 ]
             },
@@ -152,6 +152,24 @@
                     "- If the equation has a label or number (e.g., Eq. 3.1), include it: 'Equation 3.1: ...'",
                     "",
                     "LENGTH: Apply the same TIER rules from Section 3. Simple single equations → TIER 1. Multi-line systems or matrices → TIER 2 or TIER 3 as needed."
+                ]
+            },
+            {
+                "title": "7. MANDATORY PROOFREADING PASS (FINAL STEP)",
+                "instructions": [
+                    "Before returning output, perform a thorough linguistic review of EVERY short_alt and long_alt value. Treat your first draft as the original and silently correct it.",
+                    "1. Check every alt text entry thoroughly for grammatical errors, spelling mistakes, typos, and incorrect word usage.",
+                    "2. Verify sentence structure, subject–verb agreement, tense consistency, punctuation, and capitalization.",
+                    "3. Identify and fix awkward phrasing, redundant words, and unnecessary expressions.",
+                    "4. Ensure the language is clear, concise, natural, and grammatically correct.",
+                    "5. Preserve the original meaning and factual accuracy of the alt text.",
+                    "6. Do not introduce new information, assumptions, or visual details that are not present in the original content.",
+                    "7. Maintain appropriate editorial and accessibility standards for alt text. All rules in Sections 3 and 4 still apply (no leading 'A', 'An', or 'The'; 300-word cap; the selected US or UK spelling variant).",
+                    "9. Check that EVERY word uses the selected spelling variant (US or UK) consistently, and correct any word written in the other variant.",
+                    "8. Do not unnecessarily rewrite content that is already grammatically correct.",
+                    "",
+                    "Do not overlook minor spelling or grammatical errors. Verify the spelling of every technical, medical, and scientific term and every transcribed label.",
+                    "Return ONLY the corrected text in the JSON fields. Do NOT include the original draft, error lists, or explanations in the output."
                 ]
             }
         ],

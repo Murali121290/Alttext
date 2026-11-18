@@ -17,7 +17,7 @@ from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.drawing.image import Image as OpenpyxlImage
 import google.genai as genai
-from utils.prompt_assets import SYSTEM_PROMPT
+from utils.prompt_assets import SYSTEM_PROMPT, get_system_prompt
 from dotenv import load_dotenv
 import logging
 import logging.handlers
@@ -1161,11 +1161,12 @@ def crop_pdf_region_to_png(filepath, page_num, x0_pct, y0_pct, x1_pct, y1_pct):
         doc.close()
 
 
-def process_annotated_region(filepath, annot, absolute_page_num, annot_idx):
+def process_annotated_region(filepath, annot, absolute_page_num, annot_idx, spelling="US"):
     """
     Render crop, send to Gemini, and return a dictionary ready for the Excel builder.
     """
-    from utils.markup_processor import MARKUP_SYSTEM_PROMPT
+    from utils.markup_processor import get_markup_system_prompt
+    markup_prompt = get_markup_system_prompt(spelling)
     client = get_gemini_client()
     x0, y0, x1, y1 = annot["x0_pct"], annot["y0_pct"], annot["x1_pct"], annot["y1_pct"]
     
@@ -1188,7 +1189,7 @@ def process_annotated_region(filepath, annot, absolute_page_num, annot_idx):
             with _GEMINI_SEMAPHORE:
                 response = client.models.generate_content(
                     model=MODEL_NAME,
-                    contents=[MARKUP_SYSTEM_PROMPT, image],
+                    contents=[markup_prompt, image],
                     config={"temperature": 0.1, "top_p": 0.9}
                 )
             if response.usage_metadata:
@@ -1249,7 +1250,7 @@ def process_annotated_region(filepath, annot, absolute_page_num, annot_idx):
     return item, png_bytes, total_in, total_out
 
 
-def process_single_image(img_data, absolute_page_num, run_qc=False, retry_attempt=0):
+def process_single_image(img_data, absolute_page_num, run_qc=False, retry_attempt=0, spelling="US"):
     """Process one page image through Gemini.
 
     FIX 10 — Added a 120-second timeout to the Gemini API call via the request
@@ -1291,7 +1292,7 @@ SELF-CHECK: After writing your alt text, verify you captured 100% of the instruc
 
 """.format(retry_attempt=retry_attempt)
 
-            context_prompt += SYSTEM_PROMPT
+            context_prompt += get_system_prompt(spelling)
 
             with _GEMINI_SEMAPHORE:
                 response = client.models.generate_content(
@@ -1404,14 +1405,14 @@ SELF-CHECK: After writing your alt text, verify you captured 100% of the instruc
     return items, total_in, total_out
 
 
-def process_single_image_with_retry(img_data, absolute_page_num, run_qc=False):
+def process_single_image_with_retry(img_data, absolute_page_num, run_qc=False, spelling="US"):
     """Wrapper for process_single_image that handles QC-driven retries."""
     MAX_QC_RETRIES = 2
 
     for retry_attempt in range(MAX_QC_RETRIES + 1):
         try:
             items, total_in, total_out = process_single_image(
-                img_data, absolute_page_num, run_qc, retry_attempt
+                img_data, absolute_page_num, run_qc, retry_attempt, spelling
             )
             if retry_attempt > 0:
                 logger.info(f"Page {absolute_page_num} succeeded after {retry_attempt} retry attempt(s)")
@@ -1476,9 +1477,10 @@ def _cleanup_extracted_images(img_dir: str, job_id: int) -> None:
             logger.error(f"Job {job_id}: Failed to delete {entry_path}. Reason: {e}")
 
 
-def run_batch_processing(batch_id, files_info, run_gemini=True, run_gpt=False):
+def run_batch_processing(batch_id, files_info, run_gemini=True, run_gpt=False, spelling="US"):
     """
     files_info: list of (job_id, file_path)
+    spelling: 'US' or 'UK' — English spelling variant for generated alt text.
 
     Key fixes vs original:
       FIX 1  — extracted_images cleanup deferred until after GPT chaining completes.
@@ -1585,7 +1587,8 @@ def run_batch_processing(batch_id, files_info, run_gemini=True, run_gpt=False):
                                 filepath,
                                 annot,
                                 annot["page"] + 1,
-                                idx + 1
+                                idx + 1,
+                                spelling
                             ): annot
                             for idx, annot in enumerate(annotations)
                         }
@@ -1622,7 +1625,7 @@ def run_batch_processing(batch_id, files_info, run_gemini=True, run_gpt=False):
                     # was defined but never called, making it dead code.
                     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
                         future_to_page = {
-                            executor.submit(process_single_image_with_retry, img_data, absolute_page_num): absolute_page_num
+                            executor.submit(process_single_image_with_retry, img_data, absolute_page_num, False, spelling): absolute_page_num
                             for img_data, absolute_page_num in pages_data
                         }
 

@@ -181,6 +181,25 @@
                 </div>
 
                 <div class="pt-4 border-t border-slate-100">
+                    <label class="block text-sm font-semibold text-slate-700 mb-1">
+                        Alt Text Spelling <span class="text-red-500">*</span>
+                    </label>
+                    <p class="text-xs text-slate-500 mb-3">Choose the English spelling for the generated alt text.</p>
+                    <div class="grid grid-cols-2 gap-3">
+                        <label class="flex items-center gap-2 px-3 py-2.5 rounded-xl border cursor-pointer transition-all"
+                            :class="spelling === 'US' ? 'border-amber-400 bg-amber-50' : 'border-slate-200 hover:border-amber-300'">
+                            <input type="radio" name="spelling" value="US" x-model="spelling" class="text-amber-500 focus:ring-amber-500/20">
+                            <span class="text-sm text-slate-700"><strong>US</strong> <span class="text-slate-400">(color)</span></span>
+                        </label>
+                        <label class="flex items-center gap-2 px-3 py-2.5 rounded-xl border cursor-pointer transition-all"
+                            :class="spelling === 'UK' ? 'border-amber-400 bg-amber-50' : 'border-slate-200 hover:border-amber-300'">
+                            <input type="radio" name="spelling" value="UK" x-model="spelling" class="text-amber-500 focus:ring-amber-500/20">
+                            <span class="text-sm text-slate-700"><strong>UK</strong> <span class="text-slate-400">(colour)</span></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="pt-4 border-t border-slate-100">
                     <label class="block text-sm font-semibold text-slate-700 mb-4">
                         Processing Options
                     </label>
@@ -228,6 +247,7 @@
             batchName: '',
             runGemini: true,
             runGpt: false,
+            spelling: '',
             isUploading: false,
             isExtracting: false,
             isArtProofUploading: false,
@@ -262,6 +282,10 @@
             },
             async submitBatch() {
                 if (this.files.length === 0) return;
+                if (this.runGemini && !this.spelling) {
+                    this.uploadError = 'Please choose the alt text spelling (US or UK) before uploading.';
+                    return;
+                }
                 this.isUploading = true;
                 this.uploadError = null;
 
@@ -270,6 +294,7 @@
                     formData.append('files', file);
                 });
                 formData.append('batch_name', this.batchName);
+                formData.append('spelling', this.spelling || 'US');
                 formData.append('run_gemini', this.runGemini ? 'true' : 'false');
                 formData.append('run_gpt', this.runGpt ? 'true' : 'false');
 
